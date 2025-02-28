@@ -86,19 +86,25 @@ class SleepManager:
     def schedule_sleep(self):
         """Schedule nightly sleep checks"""
         import schedule
-        
-        # Add sleep warning at 11:30 PM (only on non-maintenance days)
-        schedule.every().day.at("23:30").do(
-            lambda: not self.is_nightly_sleep_time() and 
-                   broadcast_discord_message("💤 Server will sleep in 30 minutes if no players are online!")
-        )
+        from datetime import datetime
+
+        def should_send_sleep_warning():
+            """Check if we should send sleep warning based on time"""
+            current_hour = datetime.now().hour
+            # Only send sleep warning if it's between 00:00 (midnight) and 07:30 (7:30 AM)
+            if current_hour < 7 or (current_hour == 7 and datetime.now().minute < 30):
+                return not self.is_nightly_sleep_time() and broadcast_discord_message("💤 Server will sleep in 30 minutes if no players are online!")
+            return False
+
+        # Add sleep warning at 23:30 (only on non-maintenance nights)
+        schedule.every().day.at("23:30").do(should_send_sleep_warning)
         
         # Add nightly sleep check at 23:59
         schedule.every().day.at("23:59").do(
             lambda: self.is_nightly_sleep_time() and self.initiate_sleep("nightly")
         )
         
-        # Add morning wake at 8:00
+        # Morning wake should only start server, no sleep messages
         schedule.every().day.at("08:00").do(
             lambda: self.is_morning_wake_time() and server_manager.start_server()
         )
