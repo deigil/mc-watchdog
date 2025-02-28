@@ -33,11 +33,6 @@ class MaintenanceManager:
             log("Initiating maintenance mode")
             self.is_in_maintenance = True
             
-            # Send initial maintenance message
-            maintenance_msg = "🔧 **MAINTENANCE MODE**\n"
-            maintenance_msg += f"Server will be down until {('Wednesday' if datetime.now().weekday() == 0 else 'Friday')} 8 AM"
-            broadcast_discord_message(maintenance_msg)
-            
             # Check if server is empty, if not, wait until it is
             while not server_manager.check_server_empty():
                 log("Server not empty, waiting 5 minutes...")
@@ -47,6 +42,12 @@ class MaintenanceManager:
             
             # Stop the Minecraft container
             server_manager.stop_server()
+            
+            # Only send maintenance message after server is confirmed stopped
+            if not server_manager.check_server():
+                maintenance_msg = "🔧 **MAINTENANCE MODE**\n"
+                maintenance_msg += f"Server will be down until {('Wednesday' if datetime.now().weekday() == 0 else 'Friday')} 8 AM"
+                broadcast_discord_message(maintenance_msg)
             
             # Signal Windows to sleep using sleep module
             signal_windows_sleep()
