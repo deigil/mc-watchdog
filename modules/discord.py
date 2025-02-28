@@ -122,6 +122,7 @@ class DiscordBot:
                     
         except Exception as e:
             log(f"Fatal error in Discord monitor: {e}")
+            self.send_message(self.console_channel, "🔴 Console Bot has stopped due to an error")
 
 # Create singleton instance
 discord_bot = DiscordBot()

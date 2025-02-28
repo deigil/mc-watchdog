@@ -122,6 +122,11 @@ class ServerManager:
                 # Force release port after stopping
                 self.release_port(force=True)
                 self.manual_stop = True
+                
+                # Send console bot stopped message
+                from modules.discord import send_console_message
+                send_console_message("Console Bot has stopped.")
+                
                 return True
             return False
         except Exception as e:
