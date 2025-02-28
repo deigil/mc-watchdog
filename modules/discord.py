@@ -71,27 +71,53 @@ class DiscordBot:
                                 content = message.get('content', '').strip().lower()
                                 if content == '/start':
                                     log("Received start command from Discord")
+                                    self.send_message(self.console_channel, "⚙️ Processing start command...")
+                                    
                                     if not self.server_manager.check_server():
-                                        self.server_manager.start_server()
-                                        broadcast_discord_message("🚀 Server is starting up!")
+                                        if self.server_manager.start_server():
+                                            broadcast_discord_message("🚀 Server is starting up!")
+                                            self.send_message(self.console_channel, "✅ Server started successfully!")
+                                        else:
+                                            self.send_message(self.console_channel, "❌ Failed to start server!")
                                     else:
-                                        self.send_message(self.console_channel, "⚙️ Server is already running!")
+                                        self.send_message(self.console_channel, "ℹ️ Server is already running!")
+                                    
                                 elif content == '/stop':
                                     log("Received stop command from Discord")
-                                    self.server_manager.stop_server()
+                                    self.send_message(self.console_channel, "⚙️ Processing stop command...")
+                                    
+                                    if self.server_manager.check_server():
+                                        if self.server_manager.stop_server():
+                                            broadcast_discord_message("🛑 Server has been stopped")
+                                            self.send_message(self.console_channel, "✅ Server stopped successfully!")
+                                        else:
+                                            self.send_message(self.console_channel, "❌ Failed to stop server!")
+                                    else:
+                                        self.send_message(self.console_channel, "ℹ️ Server is already stopped!")
+                                    
                                 elif content == '/sleep':
                                     log("Received sleep command from Discord")
+                                    self.send_message(self.console_channel, "⚙️ Processing sleep command...")
+                                    
                                     if self.server_manager.check_server():
-                                        self.server_manager.stop_server()
+                                        self.send_message(self.console_channel, "🛑 Stopping server first...")
+                                        if not self.server_manager.stop_server():
+                                            self.send_message(self.console_channel, "❌ Failed to stop server!")
+                                            continue
                                         time.sleep(2)  # Wait for server to stop
+                                    
                                     broadcast_discord_message("💤 Server is going to sleep...")
                                     from modules.sleep import sleep_manager
-                                    sleep_manager.initiate_sleep("manual")
+                                    if sleep_manager.initiate_sleep("manual"):
+                                        self.send_message(self.console_channel, "✅ Sleep initiated successfully!")
+                                    else:
+                                        self.send_message(self.console_channel, "❌ Failed to initiate sleep!")
                     
                     time.sleep(2)  # Wait 2 seconds between checks
                     
                 except Exception as e:
                     log(f"Error monitoring Discord commands: {e}")
+                    self.send_message(self.console_channel, f"⚠️ Error processing command: {e}")
                     time.sleep(5)  # Wait longer on error
                     
         except Exception as e:
