@@ -134,20 +134,55 @@ class ServerManager:
         """Check if server is empty using logs"""
         try:
             mc_log_path = MC_LOG
-            players = set()
+            active_players = {}  # Track each player's state: {player: {"state": "online/offline", "last_action": timestamp}}
             
             with open(mc_log_path, 'r') as f:
-                for line in f:
-                    if "[Server thread/INFO]" in line:
-                        if "joined the game" in line:
-                            player = line.split(": ")[1].split(" joined")[0]
-                            players.add(player)
-                        elif "left the game" in line:
-                            player = line.split(": ")[1].split(" left")[0]
-                            if player in players:
-                                players.remove(player)
+                # Start from end and read last 1000 lines (configurable)
+                lines = f.readlines()
+                recent_lines = lines[-1000:] if len(lines) > 1000 else lines
+                
+                for line in recent_lines:
+                    if "[Server thread/INFO] [net.minecraft.server.dedicated.DedicatedServer/]:" in line:
+                        try:
+                            # Extract timestamp from [28Feb2025 09:40:21.357] format
+                            timestamp = line.split("]")[0].strip("[")
+                            
+                            if "joined the game" in line:
+                                # Extract player name from "Blueberypie joined the game"
+                                player = line.split("DedicatedServer/]: ")[1].split(" joined")[0]
+                                active_players[player] = {
+                                    "state": "online",
+                                    "last_action": timestamp,
+                                    "last_event": "join"
+                                }
+                                log(f"Player {player} joined at {timestamp}")
+                                
+                            elif "left the game" in line:
+                                player = line.split("DedicatedServer/]: ")[1].split(" left")[0]
+                                if player in active_players:
+                                    active_players[player] = {
+                                        "state": "offline",
+                                        "last_action": timestamp,
+                                        "last_event": "leave"
+                                    }
+                                    log(f"Player {player} left at {timestamp}")
+                                
+                        except IndexError:
+                            continue  # Skip malformed lines
             
-            return len(players) == 0
+            # Check for any online players
+            online_players = [
+                player for player, data in active_players.items()
+                if data["state"] == "online"
+            ]
+            
+            if online_players:
+                log(f"Currently online players: {', '.join(online_players)}")
+                return False
+            
+            log("No active players detected")
+            return True
+            
         except Exception as e:
             log(f"Error checking logs for players: {e}")
             return False  # Assume not empty if we can't check
