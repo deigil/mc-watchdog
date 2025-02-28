@@ -16,43 +16,67 @@ class ServerManager:
         try:
             # First check if container is running
             container_status = self.get_container_status()
-            current_state = False  # Default to server being down
-            
-            if container_status == "running":
-                # Then check if port is available
+            if container_status != "running":
+                if self.last_server_state:  # If server was up before
+                    log(f"Server stopped unexpectedly. Docker container status: {container_status}")
+                    # Force release port if container is not running
+                    self.release_port(force=True)
+                return False
+
+            # Then check if port is available
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(3)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                        sock.settimeout(3)
-                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                        sock.bind(("0.0.0.0", self.port))
-                        # If we can bind, server is not listening yet
-                        current_state = False
+                    sock.bind(("0.0.0.0", self.port))
+                    # If we can bind, server is not listening
+                    return False
                 except socket.error:
-                    # Can't bind, server is up and listening
-                    current_state = True
-            
-            # Only log state change from up to down
-            if self.last_server_state and not current_state:
-                log(f"Server stopped unexpectedly. Docker container status: {container_status}")
-            
-            self.last_server_state = current_state
-            return current_state
-            
+                    # Can't bind, server is up
+                    return True
+                
         except Exception as e:
             log(f"Error checking server: {e}")
+            # On error, try to force release port
+            self.release_port(force=True)
             return False
 
-    def release_port(self):
-        """Release the port by closing any existing socket"""
+    def release_port(self, force=False):
+        """Release the server port"""
         try:
-            # Create a temporary socket to force close any existing connections
-            temp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            temp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            temp_sock.bind(("0.0.0.0", self.port))
-            temp_sock.close()
+            # First check if port is actually in use
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('127.0.0.1', self.port))
+            sock.close()
+            
+            if result == 0 or force:  # Port is in use or force release
+                # Try to find and kill any process using the port
+                try:
+                    cmd = f"lsof -i :{self.port} -t"
+                    pid = subprocess.check_output(cmd, shell=True).decode().strip()
+                    if pid:
+                        subprocess.run(['kill', '-9', pid], check=False)
+                        log(f"Killed process {pid} using port {self.port}")
+                except:
+                    pass  # Ignore errors from lsof/kill
+                
+                # Try to bind to port to ensure it's released
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    sock.bind(('0.0.0.0', self.port))
+                    sock.close()
+                except Exception as e:
+                    if not force:
+                        raise Exception(f"Error releasing port: {e}")
+            
             log(f"Port {self.port} released")
+            return True
+            
         except Exception as e:
             log(f"Error releasing port: {e}")
+            return False
 
     def start_server(self):
         """Start the Minecraft server"""
@@ -92,14 +116,18 @@ class ServerManager:
     def stop_server(self):
         """Stop the Minecraft server"""
         try:
-            log("Attempting to stop server...")
-            self.manual_stop = True  # Set flag when manually stopping
-            subprocess.run(["docker", "stop", self.container], check=True)
-            log("Stopped Minecraft server")
-            return True
+            if self.check_server():
+                subprocess.run(["docker", "stop", self.container], check=True)
+                log("Server container stopped")
+                # Force release port after stopping
+                self.release_port(force=True)
+                self.manual_stop = True
+                return True
+            return False
         except Exception as e:
             log(f"Error stopping server: {e}")
-            self.manual_stop = False  # Reset flag if stop fails
+            # Try to force release port on error
+            self.release_port(force=True)
             return False
 
     def check_server_empty(self):
