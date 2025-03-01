@@ -4,6 +4,8 @@ import time
 from modules.logging import log
 from config import SERVER_PORT, DOCKER_CONTAINER, MC_LOG
 from modules import message_tracker
+from datetime import datetime
+from modules.utils import is_maintenance_day
 
 class ServerManager:
     def __init__(self):
@@ -81,6 +83,18 @@ class ServerManager:
             # Check container status first
             if self.get_container_status() != "running":
                 subprocess.run(["docker", "start", self.container], check=True)
+                from modules.discord import broadcast_discord_message
+                from modules.utils import is_maintenance_day
+                
+                # Always send startup message
+                broadcast_discord_message("🚀 Server is starting up!")
+                
+                # Only send morning greeting if not maintenance day
+                if not is_maintenance_day():
+                    current_hour = datetime.now().hour
+                    if 8 <= current_hour < 9:
+                        broadcast_discord_message("🌅 Good morning! Server is waking up!")
+                
                 log("Starting Minecraft server...")
                 
                 # Wait for server to start (3 minutes timeout)
@@ -154,7 +168,6 @@ class ServerManager:
                             timestamp = line.split("]")[0].strip("[")
                             
                             if "joined the game" in line:
-                                # Extract player name from "Blueberypie joined the game"
                                 player = line.split("DedicatedServer/]: ")[1].split(" joined")[0]
                                 active_players[player] = {
                                     "state": "online",
@@ -206,7 +219,7 @@ class ServerManager:
         
         # Send connection attempt message only when we start listening for the first time
         if not hasattr(self, '_listening_active') or not self._listening_active:
-            log("Starting new listening period")  # Debug log
+            log("Starting new listening period")
             from modules.discord import broadcast_discord_message
             broadcast_discord_message("💤 Next connection attempt will wake up server!")
             self._listening_active = True
@@ -232,7 +245,7 @@ class ServerManager:
                 conn.close()
                 self._listening_logged = False  # Reset for next listen cycle
                 delattr(self, '_listening_active')  # Use delattr instead of setting to False
-                log("Listening period ended due to connection")  # Debug log
+                log("Connection received, starting server...")  # Added log message
                 return True
             except socket.timeout:
                 return False
