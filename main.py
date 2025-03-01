@@ -11,6 +11,7 @@ from modules.discord import discord_bot, broadcast_discord_message, start_discor
 from modules.server import server_manager
 from modules.maintenance import maintenance_manager, is_maintenance_time, is_maintenance_day
 from modules.sleep import sleep_manager
+from modules import message_tracker
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
@@ -51,10 +52,6 @@ def main():
         # Send startup messages
         broadcast_discord_message("👀 Watchdog is now monitoring the server!")
         
-        # If server is down and not in maintenance, let players know they can wake it
-        if not server_manager.check_server() and not is_maintenance_time() and not is_maintenance_day():
-            broadcast_discord_message("💤 Next connection attempt will wake up server!")
-        
         # Schedule maintenance and sleep checks
         maintenance_manager.schedule_maintenance()
         sleep_manager.schedule_sleep()
@@ -66,43 +63,43 @@ def main():
         log_monitor.start()
         discord_monitor.start()
         
-        last_message = "💤 Next connection attempt will wake up server!"  # Set initial message
-        last_server_state = server_manager.check_server()  # Track server state
+        last_server_state = server_manager.check_server()
+        server_starting = False
         
         # Set initial manual_stop state based on maintenance
         if is_maintenance_time() or is_maintenance_day():
             server_manager.manual_stop = True
             broadcast_discord_message("🔧 Server is in maintenance mode")
-            last_message = "🔧 Server is in maintenance mode"
+            message_tracker.last_message = "🔧 Server is in maintenance mode"
         
         while True:
-            schedule.run_pending()  # Run any scheduled tasks
+            schedule.run_pending()
             
             current_server_state = server_manager.check_server()
             
-            if not current_server_state:  # Server is down
-                current_message = ""
-                
-                # Only listen for connections if not maintenance time or maintenance day
-                # and not manually stopped
+            if not current_server_state and not server_starting:  # Server is down
                 if not is_maintenance_time() and not is_maintenance_day() and not server_manager.manual_stop:
                     if server_manager.listen_for_connection():
                         log("Connection attempt received, starting server...")
-                        if server_manager.start_server():  # Only send message if start successful
-                            current_message = "🚀 Server is starting up!"
-                    else:
-                        # Only broadcast sleep message if not in maintenance and not manually stopped
-                        current_message = "💤 Next connection attempt will wake up server!"
+                        server_starting = True
+                        if server_manager.start_server():
+                            broadcast_discord_message("🚀 Server is starting up!")
+                            message_tracker.last_message = "🚀 Server is starting up!"
                 elif is_maintenance_time() or is_maintenance_day():
-                    # Override any sleep messages during maintenance periods
-                    current_message = "🔧 Server is in maintenance mode"
-                
-                # Only send message if it's different from the last one
-                if current_message and current_message != last_message:
-                    broadcast_discord_message(current_message)
-                    last_message = current_message
+                    if message_tracker.last_message != "🔧 Server is in maintenance mode":
+                        broadcast_discord_message("🔧 Server is in maintenance mode")
+                        message_tracker.last_message = "🔧 Server is in maintenance mode"
             
-            last_server_state = current_server_state
+            # Reset flags when server state changes
+            if current_server_state != last_server_state:
+                if current_server_state:
+                    message_tracker.last_message = None
+                last_server_state = current_server_state
+            
+            # Reset server_starting flag when server is up
+            if current_server_state and server_starting:
+                server_starting = False
+            
             time.sleep(1)
             
     except Exception as e:

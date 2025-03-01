@@ -3,6 +3,7 @@ import subprocess
 import time
 from modules.logging import log
 from config import SERVER_PORT, DOCKER_CONTAINER, MC_LOG
+from modules import message_tracker
 
 class ServerManager:
     def __init__(self):
@@ -46,86 +47,60 @@ class ServerManager:
     def release_port(self, force=False):
         """Release the server port"""
         try:
-            # First check if port is actually in use
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            result = sock.connect_ex(('127.0.0.1', self.port))
-            sock.close()
+            if not message_tracker.port_logged:
+                log(f"Port {self.port} released")
+                message_tracker.port_logged = True
             
-            if result == 0 or force:  # Port is in use or force release
-                # Try to find and kill any process using the port
-                try:
-                    cmd = f"lsof -i :{self.port} -t"
-                    pid = subprocess.check_output(cmd, shell=True).decode().strip()
-                    if pid:
-                        subprocess.run(['kill', '-9', pid], check=False)
-                        log(f"Killed process {pid} using port {self.port}")
-                except:
-                    pass  # Ignore errors from lsof/kill
-                
-                # Try to bind to port to ensure it's released
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    sock.bind(('0.0.0.0', self.port))
-                    sock.close()
-                except Exception as e:
-                    if not force:
-                        raise Exception(f"Error releasing port: {e}")
-            
-            log(f"Port {self.port} released")
-            return True
-            
+            # Try to find and kill any process using the port
+            try:
+                cmd = f"lsof -i :{self.port} -t"
+                pid = subprocess.check_output(cmd, shell=True).decode().strip()
+                if pid:
+                    subprocess.run(['kill', '-9', pid], check=False)
+            except:
+                pass
         except Exception as e:
-            log(f"Error releasing port: {e}")
-            return False
+            if not message_tracker.port_logged:
+                log(f"Error releasing port: {e}")
 
     def start_server(self):
         """Start the Minecraft server"""
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                # Add a flag to prevent duplicate messages
-                if not hasattr(self, '_starting'):
-                    self._starting = True
-                    log("Attempting to start server...")
-                    
-                    self.release_port()
-                    time.sleep(2)
-                    
-                    # Check container status first
-                    if self.get_container_status() != "running":
-                        subprocess.run(["docker", "start", self.container], check=True)
-                        log("Starting Minecraft server...")
-                        
-                        # Wait for server to start (3 minutes timeout)
-                        for _ in range(180):
-                            if self.check_server():
-                                log("Server has started successfully!")
-                                # Only send broadcast message once
-                                from modules.discord import broadcast_discord_message
-                                broadcast_discord_message("🚀 Server is starting up!")
-                                self._starting = False
-                                return True
-                            time.sleep(1)
-                        
-                        raise Exception("Server failed to start after waiting period")
-                    else:
-                        log("Container already running")
+        try:
+            # Add a flag to prevent duplicate messages and starts
+            if hasattr(self, '_starting') and self._starting:
+                log("Server start already in progress")
+                return True
+            
+            self._starting = True
+            self.manual_stop = False  # Reset manual stop flag when starting
+            log("Attempting to start server...")
+            
+            self.release_port()
+            time.sleep(2)
+            
+            # Check container status first
+            if self.get_container_status() != "running":
+                subprocess.run(["docker", "start", self.container], check=True)
+                log("Starting Minecraft server...")
+                
+                # Wait for server to start (3 minutes timeout)
+                for _ in range(180):
+                    if self.check_server():
+                        log("Server has started successfully!")
                         self._starting = False
                         return True
-                    
-                else:
-                    log("Server start already in progress")
-                    return True
+                    time.sleep(1)
                 
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    log(f"Retry {attempt + 1}/{max_retries} after error: {e}")
-                    time.sleep(30)  # Wait between retries
-                else:
-                    self._starting = False
-                    raise
+                self._starting = False
+                raise Exception("Server failed to start after waiting period")
+            else:
+                log("Container already running")
+                self._starting = False
+                return True
+            
+        except Exception as e:
+            self._starting = False
+            log(f"Error starting server: {e}")
             return False
 
     def stop_server(self):
@@ -133,20 +108,31 @@ class ServerManager:
         try:
             if self.check_server():
                 subprocess.run(["docker", "stop", self.container], check=True)
-                log("Server container stopped")
-                # Force release port after stopping
-                self.release_port(force=True)
-                self.manual_stop = True
+                log("Server container stop command sent")
                 
-                # Send console bot stopped message
-                from modules.discord import send_console_message
-                send_console_message("Console Bot has stopped.")
+                # First wait period (20 seconds)
+                for _ in range(20):
+                    if self.get_container_status() == "exited":
+                        self.release_port(force=True)
+                        self.manual_stop = False  # Reset manual stop to allow for new connections
+                        self._listening_active = False  # Reset listening state for new connections
+                        return True
+                    time.sleep(1)
                 
-                return True
+                # If still running, wait another 20 seconds
+                log("Server taking longer to stop, waiting additional time...")
+                for _ in range(20):
+                    if self.get_container_status() == "exited":
+                        self.release_port(force=True)
+                        self.manual_stop = False  # Reset manual stop to allow for new connections
+                        self._listening_active = False  # Reset listening state for new connections
+                        return True
+                    time.sleep(1)
+                
+                raise Exception("Server did not stop after 40 seconds")
             return False
         except Exception as e:
             log(f"Error stopping server: {e}")
-            # Try to force release port on error
             self.release_port(force=True)
             return False
 
@@ -212,27 +198,41 @@ class ServerManager:
         if self.manual_stop:
             return False
         
+        # Don't try to listen if server is already running
+        if self.check_server():
+            if hasattr(self, '_listening_active'):
+                delattr(self, '_listening_active')  # Reset if server is running
+            return False
+        
+        # Send connection attempt message only when we start listening for the first time
+        if not hasattr(self, '_listening_active') or not self._listening_active:
+            log("Starting new listening period")  # Debug log
+            from modules.discord import broadcast_discord_message
+            broadcast_discord_message("💤 Next connection attempt will wake up server!")
+            self._listening_active = True
+        
         sock = None
         try:
-            # Don't try to listen if server is already running
-            if self.check_server():
-                return False
-            
             self.release_port()
             time.sleep(1)
             
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", self.port))
-            sock.listen()
-            sock.settimeout(5)  # Add timeout to prevent blocking
+            sock.listen(1)
+            sock.settimeout(5)  # 5 second timeout
             
-            log("Listening for connection attempts...")
+            if not hasattr(self, '_listening_logged'):
+                log("Listening for connection attempts...")
+                self._listening_logged = True
             
             try:
                 conn, addr = sock.accept()
                 log(f"Connection attempt from {addr}")
                 conn.close()
+                self._listening_logged = False  # Reset for next listen cycle
+                delattr(self, '_listening_active')  # Use delattr instead of setting to False
+                log("Listening period ended due to connection")  # Debug log
                 return True
             except socket.timeout:
                 return False
@@ -243,7 +243,6 @@ class ServerManager:
         finally:
             if sock:
                 sock.close()
-                log("Closed listening socket")
 
     def get_container_status(self):
         """Get Docker container status"""

@@ -75,7 +75,6 @@ class DiscordBot:
                                     
                                     if not self.server_manager.check_server():
                                         if self.server_manager.start_server():
-                                            broadcast_discord_message("🚀 Server is starting up!")
                                             self.send_message(self.console_channel, "✅ Server started successfully!")
                                         else:
                                             self.send_message(self.console_channel, "❌ Failed to start server!")
@@ -88,7 +87,6 @@ class DiscordBot:
                                     
                                     if self.server_manager.check_server():
                                         if self.server_manager.stop_server():
-                                            broadcast_discord_message("🛑 Server has been stopped")
                                             self.send_message(self.console_channel, "✅ Server stopped successfully!")
                                         else:
                                             self.send_message(self.console_channel, "❌ Failed to stop server!")
@@ -100,7 +98,6 @@ class DiscordBot:
                                     self.send_message(self.console_channel, "⚙️ Processing sleep command...")
                                     
                                     if self.server_manager.check_server():
-                                        self.send_message(self.console_channel, "🛑 Stopping server first...")
                                         if not self.server_manager.stop_server():
                                             self.send_message(self.console_channel, "❌ Failed to stop server!")
                                             continue
@@ -122,7 +119,6 @@ class DiscordBot:
                     
         except Exception as e:
             log(f"Fatal error in Discord monitor: {e}")
-            self.send_message(self.console_channel, "🔴 Console Bot has stopped due to an error")
 
 # Create singleton instance
 discord_bot = DiscordBot()
