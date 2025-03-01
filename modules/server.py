@@ -19,7 +19,7 @@ class ServerManager:
             if container_status != "running":
                 if self.last_server_state:  # If server was up before
                     log(f"Server stopped unexpectedly. Docker container status: {container_status}")
-                    # Force release port if container is not running
+                    self.last_server_state = False  # Update state to prevent multiple messages
                     self.release_port(force=True)
                 return False
 
@@ -30,15 +30,17 @@ class ServerManager:
                 try:
                     sock.bind(("0.0.0.0", self.port))
                     # If we can bind, server is not listening
+                    self.last_server_state = False
                     return False
                 except socket.error:
                     # Can't bind, server is up
+                    self.last_server_state = True
                     return True
                 
         except Exception as e:
             log(f"Error checking server: {e}")
-            # On error, try to force release port
             self.release_port(force=True)
+            self.last_server_state = False
             return False
 
     def release_port(self, force=False):
@@ -196,8 +198,13 @@ class ServerManager:
         """Only listen for connections if not manually stopped"""
         if self.manual_stop:
             return False
+        
         sock = None
         try:
+            # Don't try to listen if server is already running
+            if self.check_server():
+                return False
+            
             self.release_port()
             time.sleep(1)
             
@@ -205,17 +212,18 @@ class ServerManager:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", self.port))
             sock.listen()
+            sock.settimeout(5)  # Add timeout to prevent blocking
             
             log("Listening for connection attempts...")
             
-            while True:
-                try:
-                    conn, addr = sock.accept()
-                    log(f"Connection attempt from {addr}")
-                    conn.close()
-                    return True
-                except socket.timeout:
-                    continue
+            try:
+                conn, addr = sock.accept()
+                log(f"Connection attempt from {addr}")
+                conn.close()
+                return True
+            except socket.timeout:
+                return False
+            
         except Exception as e:
             log(f"Error in connection listener: {e}")
             return False
