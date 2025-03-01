@@ -85,26 +85,38 @@ class ServerManager:
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                log("Attempting to start server...")
-                
-                self.release_port()
-                time.sleep(2)
-                
-                # Check container status first
-                if self.get_container_status() != "running":
-                    subprocess.run(["docker", "start", self.container], check=True)
-                    log("Starting Minecraft server...")
+                # Add a flag to prevent duplicate messages
+                if not hasattr(self, '_starting'):
+                    self._starting = True
+                    log("Attempting to start server...")
                     
-                    # Wait for server to start (3 minutes timeout)
-                    for _ in range(180):
-                        if self.check_server():
-                            log("Server has started successfully!")
-                            return True
-                        time.sleep(1)
+                    self.release_port()
+                    time.sleep(2)
                     
-                    raise Exception("Server failed to start after waiting period")
+                    # Check container status first
+                    if self.get_container_status() != "running":
+                        subprocess.run(["docker", "start", self.container], check=True)
+                        log("Starting Minecraft server...")
+                        
+                        # Wait for server to start (3 minutes timeout)
+                        for _ in range(180):
+                            if self.check_server():
+                                log("Server has started successfully!")
+                                # Only send broadcast message once
+                                from modules.discord import broadcast_discord_message
+                                broadcast_discord_message("🚀 Server is starting up!")
+                                self._starting = False
+                                return True
+                            time.sleep(1)
+                        
+                        raise Exception("Server failed to start after waiting period")
+                    else:
+                        log("Container already running")
+                        self._starting = False
+                        return True
+                    
                 else:
-                    log("Container already running")
+                    log("Server start already in progress")
                     return True
                 
             except Exception as e:
@@ -112,6 +124,7 @@ class ServerManager:
                     log(f"Retry {attempt + 1}/{max_retries} after error: {e}")
                     time.sleep(30)  # Wait between retries
                 else:
+                    self._starting = False
                     raise
             return False
 
