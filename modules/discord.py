@@ -1,8 +1,12 @@
 import requests
 import time
+import asyncio
+import threading
 from config import DISCORD_TOKEN, DISCORD_CHANNELS, CONSOLE_CHANNEL
 from modules.logging import log
 from modules.server import server_manager
+import discord
+from modules.utils import set_discord_client
 
 class DiscordBot:
     def __init__(self):
@@ -14,6 +18,35 @@ class DiscordBot:
             'Content-Type': 'application/json'
         }
         self.server_manager = server_manager
+        
+        # Setup Discord client
+        intents = discord.Intents.default()
+        self.client = discord.Client(intents=intents)
+        
+        # Register event handlers
+        @self.client.event
+        async def on_ready():
+            """Called when the bot is ready and connected to Discord"""
+            log(f'Logged in as {self.client.user}')
+            log(f'Bot is now visible as online in Discord')
+            
+            # Set the bot's presence to online with "Watching a POG Vault!" status
+            await self.client.change_presence(
+                status=discord.Status.online,
+                activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+            )
+            log("Bot status set to online with 'Watching a POG Vault!' activity")
+            
+            # Store the client in shared state if needed
+            # set_discord_client(self.client)
+        
+        # Setup hook for initialization
+        async def setup_hook():
+            log("Bot setup hook called")
+            # Any additional setup can go here
+        
+        # Assign the setup hook
+        self.client.setup_hook = setup_hook
 
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
@@ -124,16 +157,31 @@ class DiscordBot:
         """Get player count from bot status"""
         try:
             # Find the WOLDS BOT by its user ID
-            bot = self.client.get_user(1336788464041066506)  # Replace with your actual bot ID
+            bot = self.client.get_user(1336788464041066506)  # WOLDS BOT ID
             
-            if not bot or not bot.activity:
-                log("Bot has no activity status")
+            if not bot:
+                log("Could not find WOLDS BOT")
                 return 0
             
-            # Parse the activity status which should be in format "X players"
+            if not bot.activity:
+                log("WOLDS BOT has no activity status - server may be offline")
+                return 0
+            
+            # Parse the activity status
             status_text = bot.activity.name
             log(f"Bot status: {status_text}")
             
+            # Check for offline status
+            if "offline" in status_text.lower():
+                log("Server is offline according to status")
+                return 0
+            
+            # Check for booting status
+            if "booting" in status_text.lower():
+                log("Server is booting according to status")
+                return 0
+            
+            # Normal case: "X players"
             if "players" in status_text:
                 try:
                     # Extract the number before "players"
@@ -144,10 +192,38 @@ class DiscordBot:
                     log(f"Could not parse player count from status: {status_text}")
                     return 0
             
+            # If we get here, the status text doesn't match expected formats
+            log(f"Unrecognized status format: {status_text}")
             return 0
+            
         except Exception as e:
             log(f"Error getting player count from Discord: {e}")
             return 0
+
+    def run(self):
+        """Start the Discord bot"""
+        try:
+            log("Starting Discord bot client...")
+            # Run the bot in a separate thread with its own event loop
+            bot_thread = threading.Thread(target=self._run_bot_in_thread, daemon=True)
+            bot_thread.start()
+            log("Discord bot thread started")
+        except Exception as e:
+            log(f"Error starting Discord bot: {e}")
+    
+    def _run_bot_in_thread(self):
+        """Run the bot in a separate thread"""
+        try:
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the bot
+            loop.run_until_complete(self.client.start(self.token))
+        except Exception as e:
+            log(f"Error in bot thread: {e}")
+        finally:
+            log("Bot thread exiting")
 
 # Create singleton instance
 discord_bot = DiscordBot()
@@ -164,3 +240,10 @@ def start_discord_monitor():
     from threading import Thread
     monitor_thread = Thread(target=discord_bot.monitor_commands, daemon=True)
     monitor_thread.start()
+
+def start_discord_bot():
+    """Start the Discord bot"""
+    try:
+        discord_bot.run()
+    except Exception as e:
+        log(f"Error starting Discord bot: {e}")

@@ -128,7 +128,13 @@ class SleepManager:
         """Signal Windows to sleep by creating a trigger file"""
         try:
             log(f"Attempting to create sleep trigger in directory: {SLEEP_TRIGGER_DIR}")
+            log(f"Full trigger file path: {SLEEP_TRIGGER_FILE}")
             
+            # Test WSL to Windows path access
+            if not os.path.exists("/mnt/c"):
+                log("ERROR: Cannot access Windows filesystem through WSL")
+                return False
+                
             # Ensure directory exists
             if not os.path.exists(SLEEP_TRIGGER_DIR):
                 log(f"Sleep trigger directory does not exist, creating it")
@@ -139,21 +145,24 @@ class SleepManager:
                 os.remove(SLEEP_TRIGGER_FILE)
                 log("Removed existing sleep trigger file")
             
-            log(f"Creating sleep trigger file at: {SLEEP_TRIGGER_FILE}")
+            # Write the trigger file with current timestamp
             timestamp = datetime.now()
+            log(f"Writing timestamp to trigger file: {timestamp}")
             
-            # Write the trigger file
             with open(SLEEP_TRIGGER_FILE, 'w') as f:
                 f.write(str(timestamp))
             
             # Verify file was created
             if os.path.exists(SLEEP_TRIGGER_FILE):
-                log(f"Successfully created sleep trigger file with timestamp: {timestamp}")
+                # Read back the file to verify content
+                with open(SLEEP_TRIGGER_FILE, 'r') as f:
+                    content = f.read().strip()
+                log(f"Verified trigger file creation. Content: {content}")
                 return True
             else:
                 log("Failed to verify sleep trigger file creation")
                 return False
-            
+                
         except Exception as e:
             log(f"Error creating sleep trigger: {e}")
             log(f"Current working directory: {os.getcwd()}")
@@ -163,14 +172,37 @@ class SleepManager:
 
     def schedule_sleep(self):
         """Schedule sleep checks"""
-        # Schedule the nightly check
         schedule.every().day.at("23:59").do(self.check_and_sleep)
         log("Sleep checks scheduled for 11:59 PM")
         
-        # If we're starting during sleep hours, start checking immediately
+        # Add morning wake-up reset
+        schedule.every().day.at("08:00").do(self.morning_reset)
+        log("Morning reset scheduled for 8:00 AM")
+        
         if self.is_sleep_time():
             log("Watchdog started during sleep hours, initiating immediate sleep check")
             self.check_and_sleep()
+
+    def morning_reset(self):
+        """Reset sleep state and send good morning message"""
+        try:
+            log("Performing morning reset")
+            
+            # Reset sleep state
+            self.is_sleeping = False
+            
+            # Reset server manager manual stop flag
+            server_manager.manual_stop = False
+            log("Reset manual_stop flag for morning wake-up")
+            
+            # Send good morning message
+            broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
+            log("Morning wake-up message sent")
+            
+            return True
+        except Exception as e:
+            log(f"Error in morning reset: {e}")
+            return False
 
 # Create singleton instance
 sleep_manager = SleepManager()

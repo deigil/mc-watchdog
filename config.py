@@ -21,7 +21,7 @@ WATCHDOG_LOG = os.getenv('WATCHDOG_LOG', '/workspace/watchdog/logs/watchdog.log'
 OP_LOG = os.getenv('OP_LOG', '/workspace/watchdog/logs/op.log')
 MC_LOG = os.getenv('MC_LOG', '/workspace/data/logs/latest.log')
 SLEEP_TRIGGER_DIR = os.getenv('SLEEP_TRIGGER_DIR')
-SLEEP_TRIGGER_FILE = f"{SLEEP_TRIGGER_DIR}/sleep_trigger"
+SLEEP_TRIGGER_FILE = os.getenv('SLEEP_TRIGGER_FILE')
 
 # Validate required settings
 required_settings = [

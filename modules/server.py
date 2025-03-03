@@ -84,16 +84,9 @@ class ServerManager:
             if self.get_container_status() != "running":
                 subprocess.run(["docker", "start", self.container], check=True)
                 from modules.discord import broadcast_discord_message
-                from modules.utils import is_maintenance_day
                 
                 # Always send startup message
                 broadcast_discord_message("🚀 Server is starting up!")
-                
-                # Only send morning greeting if not maintenance day
-                if not is_maintenance_day():
-                    current_hour = datetime.now().hour
-                    if 8 <= current_hour < 9:
-                        broadcast_discord_message("🌅 Good morning! Server is waking up!")
                 
                 log("Starting Minecraft server...")
                 
