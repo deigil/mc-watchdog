@@ -151,7 +151,27 @@ class ServerManager:
             return False
 
     def check_server_empty(self):
-        """Check if server is empty using logs"""
+        """Check if the server has no players by reading the Discord bot status"""
+        try:
+            from modules.discord import discord_bot
+            
+            # Get player count from Discord bot activity
+            player_count = discord_bot.get_player_count()
+            
+            if player_count > 0:
+                log(f"Discord bot reports {player_count} player(s) online")
+                return False
+            
+            log("Discord bot reports no players online")
+            return True
+            
+        except Exception as e:
+            log(f"Error checking player count from Discord: {e}")
+            # Fall back to log parsing method if Discord check fails
+            return self._check_server_empty_from_logs()
+        
+    def _check_server_empty_from_logs(self):
+        """Original method to check if server is empty by parsing logs"""
         try:
             mc_log_path = MC_LOG
             active_players = {}  # Track each player's state: {player: {"state": "online/offline", "last_action": timestamp}}

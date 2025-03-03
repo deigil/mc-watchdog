@@ -120,6 +120,35 @@ class DiscordBot:
         except Exception as e:
             log(f"Fatal error in Discord monitor: {e}")
 
+    def get_player_count(self):
+        """Get player count from bot status"""
+        try:
+            # Find the WOLDS BOT by its user ID
+            bot = self.client.get_user(1336788464041066506)  # Replace with your actual bot ID
+            
+            if not bot or not bot.activity:
+                log("Bot has no activity status")
+                return 0
+            
+            # Parse the activity status which should be in format "X players"
+            status_text = bot.activity.name
+            log(f"Bot status: {status_text}")
+            
+            if "players" in status_text:
+                try:
+                    # Extract the number before "players"
+                    count = int(status_text.split("players")[0].strip())
+                    log(f"Extracted player count: {count}")
+                    return count
+                except ValueError:
+                    log(f"Could not parse player count from status: {status_text}")
+                    return 0
+            
+            return 0
+        except Exception as e:
+            log(f"Error getting player count from Discord: {e}")
+            return 0
+
 # Create singleton instance
 discord_bot = DiscordBot()
 
