@@ -1,22 +1,41 @@
 from datetime import datetime
 import schedule
 import time
-from modules.logging import log
-from modules.server import server_manager
-from modules.discord import broadcast_discord_message
-from modules.sleep import sleep_manager
-from modules.utils import is_maintenance_day, is_maintenance_time, is_restart_time
 import os
+from modules.logging import log
 
 class MaintenanceManager:
     def __init__(self):
         self.is_in_maintenance = False
+
+    def is_maintenance_day(self):
+        """Check if it's a maintenance day (Tuesday or Thursday)"""
+        return datetime.now().weekday() in [1, 3]
+
+    def is_maintenance_time(self):
+        """Check if it's maintenance time (Monday or Wednesday 23:59)"""
+        now = datetime.now()
+        # Check if it's maintenance night (Monday or Wednesday)
+        is_maintenance_night = now.weekday() in [0, 2]
+        # If it's after 23:29 on maintenance night, consider it maintenance time
+        return is_maintenance_night and (now.hour == 23 and now.minute >= 29)
+
+    def is_restart_time(self):
+        """Check if it's time to restart after maintenance (Wednesday or Friday 8:00)"""
+        now = datetime.now()
+        return (now.weekday() in [2, 4] and  # Wednesday or Friday
+                now.hour == 8 and now.minute == 0)
 
     def initiate_maintenance(self):
         """Start maintenance mode"""
         try:
             log("Initiating maintenance mode")
             self.is_in_maintenance = True
+            
+            # Import here to avoid circular dependency
+            from modules.server import server_manager
+            from modules.sleep import sleep_manager
+            from modules.discord import broadcast_discord_message
             
             # Check if server is empty, if not, wait until it is
             while not server_manager.check_server_empty():
@@ -38,10 +57,15 @@ class MaintenanceManager:
             
         except Exception as e:
             log(f"Error during maintenance: {e}")
+            # Import here to avoid circular dependency
+            from modules.discord import broadcast_discord_message
             broadcast_discord_message(f"⚠️ Error during maintenance: {e}")
 
     def schedule_maintenance(self):
         """Schedule maintenance warnings and checks"""
+        # Import here to avoid circular dependency
+        from modules.discord import broadcast_discord_message
+        
         # Maintenance warning 30 minutes before (23:29)
         schedule.every().monday.at("23:29").do(
             lambda: broadcast_discord_message("⚠️ Server entering maintenance mode in 30 minutes!")
@@ -64,18 +88,18 @@ def is_maintenance_time():
 def is_maintenance_day():
     return maintenance_manager.is_maintenance_day()
 
+def is_restart_time():
+    return maintenance_manager.is_restart_time()
+
 def schedule_maintenance():
     maintenance_manager.schedule_maintenance()
 
 def initiate_maintenance():
     maintenance_manager.initiate_maintenance()
 
-# Add this function to check if we're in maintenance mode
 def is_maintenance_mode():
     """Check if the server is currently in maintenance mode"""
     try:
-        # You might need to adjust this based on how you track maintenance mode
-        # This is a simple implementation that checks if a maintenance file exists
         maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
         return os.path.exists(maintenance_file)
     except Exception as e:

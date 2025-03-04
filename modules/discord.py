@@ -6,7 +6,6 @@ from config import DISCORD_TOKEN, DISCORD_CHANNELS, CONSOLE_CHANNEL
 from modules.logging import log
 from modules.server import server_manager
 import discord
-from modules.utils import set_discord_client
 
 class DiscordBot:
     def __init__(self):

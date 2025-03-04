@@ -5,7 +5,6 @@ from modules.logging import log
 from config import SERVER_PORT, DOCKER_CONTAINER, MC_LOG
 from modules import message_tracker
 from datetime import datetime
-from modules.utils import is_maintenance_day
 
 class ServerManager:
     def __init__(self):
@@ -303,3 +302,8 @@ def check_server_empty():
 
 def listen_for_connection():
     return server_manager.listen_for_connection()
+
+# Instead, define a helper function to check maintenance day
+def _is_maintenance_day():
+    """Check if it's a maintenance day (Tuesday or Thursday)"""
+    return datetime.now().weekday() in [1, 3]

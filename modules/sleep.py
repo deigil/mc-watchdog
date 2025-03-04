@@ -4,7 +4,7 @@ import os
 from modules.logging import log
 from modules.server import server_manager
 from modules.discord import broadcast_discord_message, discord_bot
-from modules.utils import is_maintenance_day, get_player_count
+from modules.maintenance import is_maintenance_day
 from config import SLEEP_TRIGGER_DIR, SLEEP_TRIGGER_FILE
 import threading
 

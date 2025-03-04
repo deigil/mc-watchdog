@@ -11,9 +11,8 @@ from modules.logging import log
 from modules.discord import discord_bot, broadcast_discord_message, start_discord_bot
 from modules.server import server_manager
 from modules.maintenance import maintenance_manager
-from modules.utils import is_maintenance_time, is_maintenance_day
+from modules.maintenance import is_maintenance_time, is_maintenance_day
 from modules.sleep import sleep_manager
-from modules.utils import set_discord_client
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
