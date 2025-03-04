@@ -196,9 +196,16 @@ class SleepManager:
             server_manager.manual_stop = False
             log("Reset manual_stop flag for morning wake-up")
             
-            # Send good morning message
-            broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
-            log("Morning wake-up message sent")
+            # Check if we're in maintenance mode before sending message
+            from modules.maintenance import is_maintenance_mode
+            
+            # Only send good morning message if not in maintenance mode
+            if not is_maintenance_mode():
+                # Send good morning message
+                broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
+                log("Morning wake-up message sent")
+            else:
+                log("Skipping morning message during maintenance mode")
             
             return True
         except Exception as e:

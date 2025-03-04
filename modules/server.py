@@ -234,11 +234,19 @@ class ServerManager:
                 delattr(self, '_listening_active')  # Reset if server is running
             return False
         
+        # Check if we're in maintenance mode
+        from modules.maintenance import is_maintenance_mode
+        
         # Send connection attempt message only when we start listening for the first time
-        if not hasattr(self, '_listening_active') or not self._listening_active:
+        # and not in maintenance mode
+        if (not hasattr(self, '_listening_active') or not self._listening_active) and not is_maintenance_mode():
             log("Starting new listening period")
             from modules.discord import broadcast_discord_message
             broadcast_discord_message("💤 Next connection attempt will wake up server!")
+            self._listening_active = True
+        elif not hasattr(self, '_listening_active') or not self._listening_active:
+            # Just log without sending message during maintenance
+            log("Starting new listening period (maintenance mode - no message sent)")
             self._listening_active = True
         
         sock = None
