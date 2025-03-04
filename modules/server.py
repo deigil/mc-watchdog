@@ -146,6 +146,11 @@ class ServerManager:
     def check_server_empty(self):
         """Check if the server has no players by reading the Discord bot status"""
         try:
+            # First check if server is running
+            if self.get_container_status() != "running":
+                log("Server is not running, considering it empty")
+                return True
+            
             from modules.discord import discord_bot
             
             # Get player count from Discord bot activity

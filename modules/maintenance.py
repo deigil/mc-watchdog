@@ -6,6 +6,7 @@ from modules.server import server_manager
 from modules.discord import broadcast_discord_message
 from modules.sleep import sleep_manager
 from modules.utils import is_maintenance_day, is_maintenance_time, is_restart_time
+import os
 
 class MaintenanceManager:
     def __init__(self):
@@ -29,6 +30,11 @@ class MaintenanceManager:
                 maintenance_msg = "🔧 **MAINTENANCE MODE**\n"
                 maintenance_msg += f"Server will be down until {('Wednesday' if datetime.now().weekday() == 0 else 'Friday')} 8 AM"
                 broadcast_discord_message(maintenance_msg)
+            
+            # Create a maintenance mode marker file
+            maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
+            with open(maintenance_file, 'w') as f:
+                f.write(str(datetime.now()))
             
         except Exception as e:
             log(f"Error during maintenance: {e}")
@@ -63,3 +69,15 @@ def schedule_maintenance():
 
 def initiate_maintenance():
     maintenance_manager.initiate_maintenance()
+
+# Add this function to check if we're in maintenance mode
+def is_maintenance_mode():
+    """Check if the server is currently in maintenance mode"""
+    try:
+        # You might need to adjust this based on how you track maintenance mode
+        # This is a simple implementation that checks if a maintenance file exists
+        maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
+        return os.path.exists(maintenance_file)
+    except Exception as e:
+        log(f"Error checking maintenance mode: {e}")
+        return False

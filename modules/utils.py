@@ -1,4 +1,5 @@
 from datetime import datetime, time
+from modules.logging import log
 
 def is_maintenance_day():
     """Check if it's a maintenance day (Tuesday or Thursday)"""
@@ -18,7 +19,7 @@ def is_restart_time():
     return (now.weekday() in [2, 4] and  # Wednesday or Friday
             now.hour == 8 and now.minute == 0)
 
-# Add this if it doesn't exist
+# Shared state for Discord client
 class SharedState:
     """Singleton for sharing state between modules"""
     def __init__(self):
@@ -38,4 +39,25 @@ def set_discord_client(client):
     shared_state.set_discord_client(client)
 
 def get_discord_client():
-    return shared_state.get_discord_client() 
+    return shared_state.get_discord_client()
+
+def get_player_count():
+    """Get the number of players currently online"""
+    try:
+        # First check if the server is actually running
+        from modules.server import server_manager
+        
+        # If server is not running, we know there are 0 players
+        container_status = server_manager.get_container_status()
+        if container_status != "running":
+            log(f"Server is not running (status: {container_status}), player count is 0")
+            return 0
+            
+        # Use the DiscordBot's get_player_count method
+        from modules.discord import discord_bot
+        return discord_bot.get_player_count()
+        
+    except Exception as e:
+        log(f"Error getting player count: {str(e)}")
+        log("Assuming server is empty due to error")
+        return 0 
