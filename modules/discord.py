@@ -29,12 +29,20 @@ class DiscordBot:
             log(f'Logged in as {self.client.user}')
             log(f'Bot is now visible as online in Discord')
             
-            # Set the bot's presence to online with "Watching a POG Vault!" status
-            await self.client.change_presence(
-                status=discord.Status.online,
-                activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
-            )
-            log("Bot status set to online with 'Watching a POG Vault!' activity")
+            # Set appropriate status based on maintenance mode
+            from modules.maintenance import is_maintenance_mode
+            if is_maintenance_mode():
+                await self.client.change_presence(
+                    status=discord.Status.online,
+                    activity=discord.Activity(type=discord.ActivityType.playing, name="Architect Vault ⚙️")
+                )
+                log("Bot status set to online with 'Playing Architect Vault' activity")
+            else:
+                await self.client.change_presence(
+                    status=discord.Status.online, 
+                    activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+                )
+                log("Bot status set to online with 'Watching a POG Vault!' activity")
             
             # Store the client in shared state if needed
             # set_discord_client(self.client)
