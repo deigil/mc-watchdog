@@ -137,15 +137,11 @@ class DiscordBot:
                                     log("Received sleep command from Discord")
                                     self.send_message(self.console_channel, "⚙️ Processing sleep command...")
                                     
-                                    if self.server_manager.check_server():
-                                        if not self.server_manager.stop_server():
-                                            self.send_message(self.console_channel, "❌ Failed to stop server!")
-                                            continue
-                                        time.sleep(2)  # Wait for server to stop
-                                    
-                                    broadcast_discord_message("💤 Server is going to sleep...")
+                                    # Import sleep_manager and use its initiate_sleep method directly
                                     from modules.sleep import sleep_manager
+                                    
                                     if sleep_manager.initiate_sleep("manual"):
+                                        broadcast_discord_message("💤 Server is going to sleep...")
                                         self.send_message(self.console_channel, "✅ Sleep initiated successfully!")
                                     else:
                                         self.send_message(self.console_channel, "❌ Failed to initiate sleep!")

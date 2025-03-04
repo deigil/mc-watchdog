@@ -8,10 +8,10 @@ from threading import Thread
 from config import MC_LOG, CONSOLE_CHANNEL
 
 from modules.logging import log
-from modules.discord import discord_bot, broadcast_discord_message, start_discord_bot
+from modules.discord import discord_bot, broadcast_discord_message, start_discord_bot, start_discord_monitor
 from modules.server import server_manager
 from modules.maintenance import maintenance_manager
-from modules.maintenance import is_maintenance_time, is_maintenance_day
+from modules.maintenance import is_maintenance_time, is_maintenance_day, is_maintenance_mode
 from modules.sleep import sleep_manager
 
 def signal_handler(signum, frame):
@@ -35,10 +35,19 @@ def monitor_minecraft_logs():
                 time.sleep(0.1)
 
 def start_discord():
-    """Start Discord bot in a separate thread"""
+    """Start Discord bot and command monitoring in separate threads"""
+    # Start the Discord bot
     discord_thread = Thread(target=start_discord_bot, daemon=True)
     discord_thread.start()
-    time.sleep(2)  # Give Discord time to connect
+    
+    # Give Discord time to connect
+    time.sleep(2)
+    
+    # Start the command monitoring
+    monitor_thread = Thread(target=start_discord_monitor, daemon=True)
+    monitor_thread.start()
+    
+    log("Discord bot and command monitoring started")
 
 def main():
     try:
@@ -48,7 +57,7 @@ def main():
         
         log("🤖 Watchdog Service Starting")
         
-        # Start Discord bot first
+        # Start Discord bot and monitor first
         start_discord()
         log("✓ Discord bot started")
         
@@ -66,10 +75,10 @@ def main():
         log_monitor = Thread(target=monitor_minecraft_logs, daemon=True)
         log_monitor.start()
         
-        # Initial maintenance check
-        if is_maintenance_time() or is_maintenance_day():
+        # Initial maintenance check - only set the flag, don't initiate maintenance
+        if is_maintenance_mode():
+            log("Watchdog started during maintenance mode")
             server_manager.manual_stop = True
-            maintenance_manager.initiate_maintenance()
         
         # Main loop - handle scheduling and connection listening
         while True:

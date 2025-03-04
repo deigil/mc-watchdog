@@ -4,7 +4,7 @@ import os
 from modules.logging import log
 from modules.server import server_manager
 from modules.discord import broadcast_discord_message, discord_bot
-from modules.maintenance import is_maintenance_day
+from modules.maintenance import is_maintenance_mode
 from config import SLEEP_TRIGGER_DIR, SLEEP_TRIGGER_FILE
 import threading
 
@@ -38,10 +38,13 @@ class SleepManager:
                 self.is_sleeping = False
                 self._empty_check_scheduled = False
             
-            # Always announce bedtime status when checking (unless maintenance)
-            if not is_maintenance_day():
+            # Check if we're in maintenance mode
+            if not is_maintenance_mode():
+                # Only send bedtime message if not in maintenance mode
                 broadcast_discord_message("🌙 It's bedtime! Server will sleep when empty.")
                 log("Starting bedtime checks")
+            else:
+                log("Skipping bedtime message during maintenance mode")
             
             # Check for players
             if not server_manager.check_server_empty():
@@ -52,7 +55,7 @@ class SleepManager:
                 return False
             
             # Server is empty, announce and sleep
-            if not is_maintenance_day():
+            if not is_maintenance_mode():
                 broadcast_discord_message("💤 All players have left. Server is going to sleep and will wake up at 8:00 AM!")
             return self.initiate_sleep("auto")
             
@@ -71,7 +74,7 @@ class SleepManager:
             # If server is running and it's sleep time, check for players
             if server_manager.check_server():
                 if server_manager.check_server_empty():
-                    if not is_maintenance_day():
+                    if not is_maintenance_mode():
                         broadcast_discord_message("💤 All players have left. Server is going to sleep and will wake up at 8:00 AM!")
                     self.initiate_sleep("auto")
                     schedule.clear(self.periodic_empty_check)
@@ -131,20 +134,10 @@ class SleepManager:
             log(f"Attempting to create sleep trigger in directory: {SLEEP_TRIGGER_DIR}")
             log(f"Full trigger file path: {SLEEP_TRIGGER_FILE}")
             
-            # Test WSL to Windows path access
-            if not os.path.exists("/mnt/c"):
-                log("ERROR: Cannot access Windows filesystem through WSL")
-                return False
-                
             # Ensure directory exists
             if not os.path.exists(SLEEP_TRIGGER_DIR):
                 log(f"Sleep trigger directory does not exist, creating it")
                 os.makedirs(SLEEP_TRIGGER_DIR, exist_ok=True)
-            
-            # Remove any existing trigger file
-            if os.path.exists(SLEEP_TRIGGER_FILE):
-                os.remove(SLEEP_TRIGGER_FILE)
-                log("Removed existing sleep trigger file")
             
             # Write the trigger file with current timestamp
             timestamp = datetime.now()
@@ -197,9 +190,6 @@ class SleepManager:
             log("Reset manual_stop flag for morning wake-up")
             
             # Check if we're in maintenance mode before sending message
-            from modules.maintenance import is_maintenance_mode
-            
-            # Only send good morning message if not in maintenance mode
             if not is_maintenance_mode():
                 # Send good morning message
                 broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
@@ -221,51 +211,6 @@ def schedule_sleep():
 
 def is_sleep_time():
     return sleep_manager.is_sleep_time()
-def schedule_sleep_checks():
-    """Schedule the sleep checks for 11:59 PM"""
-    try:
-        # Get the current time
-        now = datetime.now()
-        
-        # Set the target time to 11:59 PM today
-        target_time = now.replace(hour=23, minute=59, second=0, microsecond=0)
-        
-        # If it's already past the target time, schedule for tomorrow
-        if now > target_time:
-            target_time += timedelta(days=1)
-        
-        # Calculate the delay in seconds
-        delay = (target_time - now).total_seconds()
-        
-        # Schedule the sleep check
-        threading.Timer(delay, check_sleep_time).start()
-        
-        log(f"Sleep checks scheduled for 11:59 PM")
-    except Exception as e:
-        log(f"Error scheduling sleep checks: {e}")
 
-def check_sleep_time():
-    """Check if it's time to sleep and the server is empty"""
-    try:
-        # Check if we're in maintenance mode
-        from modules.maintenance import is_maintenance_mode
-        
-        # Only send bedtime message if we're not in maintenance mode
-        if not is_maintenance_mode():
-            # Send the bedtime message
-            broadcast_discord_message("🌙 It's bedtime! Server will sleep when empty.")
-            log("Starting bedtime checks")
-            
-            # Check if the server is empty using the DiscordBot's get_player_count
-            if discord_bot.get_player_count() == 0:
-                broadcast_discord_message("💤 All players have left. Server is going to sleep and will wake up at 8:00 AM!")
-                sleep_manager.initiate_sleep("auto")
-        else:
-            log("Skipping bedtime message during maintenance mode")
-            
-            # Still check if the server is empty for maintenance sleep
-            if discord_bot.get_player_count() == 0:
-                sleep_manager.initiate_sleep("auto")
-                
-    except Exception as e:
-        log(f"Error checking sleep time: {e}")
+def trigger_sleep_mode(mode="auto"):
+    return sleep_manager.initiate_sleep(mode)
