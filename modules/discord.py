@@ -247,17 +247,19 @@ def broadcast_discord_message(message, force=False):
     try:
         # Check if we're in maintenance mode
         from modules.maintenance import is_maintenance_mode
+        maintenance_mode = is_maintenance_mode()
         
         # Only broadcast to all channels if not in maintenance mode or if forced
-        if not is_maintenance_mode() or force:
+        if not maintenance_mode or force:
             # Send to all configured channels
             for channel in discord_bot.channels:
                 discord_bot.send_message(channel, message)
-        else:
-            # During maintenance, only log the message
+        
+        # During maintenance, always send to console channel with prefix
+        if maintenance_mode and not force:
             log(f"Skipping broadcast during maintenance: {message}")
             
-            # Optionally, still send to console channel
+            # Always send to console channel during maintenance
             discord_bot.send_message(discord_bot.console_channel, f"[MAINTENANCE] {message}")
     except Exception as e:
         log(f"Error in broadcast_discord_message: {e}")
