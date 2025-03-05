@@ -48,18 +48,20 @@ class MaintenanceManager:
             if sleep_manager.initiate_sleep("maintenance"):
                 maintenance_msg = "🔧 **MAINTENANCE MODE**\n"
                 maintenance_msg += f"Server will be down until {('Wednesday' if datetime.now().weekday() == 0 else 'Friday')} 8 AM"
-                broadcast_discord_message(maintenance_msg)
-            
-            # Create a maintenance mode marker file
-            maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
-            with open(maintenance_file, 'w') as f:
-                f.write(str(datetime.now()))
+                
+                # Force send to all channels even during maintenance
+                broadcast_discord_message(maintenance_msg, force=True)
+                
+                # Create a maintenance mode marker file
+                maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
+                with open(maintenance_file, 'w') as f:
+                    f.write(str(datetime.now()))
             
         except Exception as e:
             log(f"Error during maintenance: {e}")
             # Import here to avoid circular dependency
             from modules.discord import broadcast_discord_message
-            broadcast_discord_message(f"⚠️ Error during maintenance: {e}")
+            broadcast_discord_message(f"⚠️ Error during maintenance: {e}", force=True)
 
     def schedule_maintenance(self):
         """Schedule maintenance warnings and checks"""

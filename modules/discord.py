@@ -73,11 +73,6 @@ class DiscordBot:
         except Exception as e:
             log(f"Error sending Discord message: {e}")
 
-    def broadcast(self, message):
-        """Send message to all configured Discord channels"""
-        for channel in self.channels:
-            self.send_message(channel, message)
-
     def monitor_commands(self):
         """Monitor Discord console channel for commands"""
         try:
@@ -140,8 +135,14 @@ class DiscordBot:
                                     # Import sleep_manager and use its initiate_sleep method directly
                                     from modules.sleep import sleep_manager
                                     
+                                    # The initiate_sleep method already handles:
+                                    # - Checking if server is empty
+                                    # - Stopping the server if it's running
+                                    # - Creating the sleep trigger file
+                                    # - Setting manual_stop flag
                                     if sleep_manager.initiate_sleep("manual"):
-                                        broadcast_discord_message("💤 Server is going to sleep...")
+                                        # Only send to console channel, not to all channels
+                                        self.send_message(self.console_channel, "💤 Server is going to sleep...")
                                         self.send_message(self.console_channel, "✅ Sleep initiated successfully!")
                                     else:
                                         self.send_message(self.console_channel, "❌ Failed to initiate sleep!")
@@ -235,8 +236,31 @@ discord_bot = DiscordBot()
 def send_discord_message(channel_id, message):
     discord_bot.send_message(channel_id, message)
 
-def broadcast_discord_message(message):
-    discord_bot.broadcast(message)
+def broadcast_discord_message(message, force=False):
+    """
+    Send message to all configured Discord channels
+    
+    Args:
+        message: The message to send
+        force: If True, send even during maintenance mode
+    """
+    try:
+        # Check if we're in maintenance mode
+        from modules.maintenance import is_maintenance_mode
+        
+        # Only broadcast to all channels if not in maintenance mode or if forced
+        if not is_maintenance_mode() or force:
+            # Send to all configured channels
+            for channel in discord_bot.channels:
+                discord_bot.send_message(channel, message)
+        else:
+            # During maintenance, only log the message
+            log(f"Skipping broadcast during maintenance: {message}")
+            
+            # Optionally, still send to console channel
+            discord_bot.send_message(discord_bot.console_channel, f"[MAINTENANCE] {message}")
+    except Exception as e:
+        log(f"Error in broadcast_discord_message: {e}")
 
 def start_discord_monitor():
     """Start the Discord command monitoring thread"""
