@@ -115,15 +115,53 @@ class ServerManager:
                     log("Starting Minecraft server...")
                     
                     # Wait for server to start (3 minutes timeout)
-                    for _ in range(180):
+                    server_started = False
+                    for i in range(180):
                         if self.check_server():
                             log("Server has started successfully!")
+                            broadcast_discord_message("✅ Server is now online and ready!")
                             self._starting = False
+                            server_started = True
                             return True
+                        
+                        # Every 30 seconds, check container health
+                        if i > 0 and i % 30 == 0:
+                            health_status = self.get_container_status()
+                            log(f"Server startup in progress... Health status: {health_status}")
+                            
+                            # If unhealthy after 30 seconds, consider it failed
+                            if health_status == "unhealthy" and i >= 30:
+                                log("Container is unhealthy, server failed to start properly")
+                                broadcast_discord_message("❌ Server failed to start properly (unhealthy container)")
+                                self.stop_server()
+                                self._starting = False
+                                return False
+                            
+                            # If still starting after 2 minutes, send an update
+                            if i >= 120 and health_status in ["starting", None]:
+                                log("Server is taking longer than usual to start...")
+                                broadcast_discord_message("⏳ Server is taking longer than usual to start...")
+                        
                         time.sleep(1)
                     
-                    self._starting = False
-                    raise Exception("Server failed to start after waiting period")
+                    # If we get here, the server didn't start within the timeout
+                    if not server_started:
+                        log("Server failed to start after waiting period")
+                        
+                        # Check final health status
+                        health_status = self.get_container_status()
+                        log(f"Final container health status: {health_status}")
+                        
+                        # Stop the container
+                        log("Stopping container due to failed start")
+                        self.stop_server()
+                        
+                        # Send failure message with health status
+                        broadcast_discord_message(f"❌ Server failed to start after 3 minutes (status: {health_status})")
+                        
+                        self._starting = False
+                        return False
+                    
                 except Exception as e:
                     self._starting = False
                     raise e  # Re-raise to be caught by outer try/except

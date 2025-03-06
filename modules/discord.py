@@ -289,25 +289,25 @@ def broadcast_discord_message(message, force=False):
     
     Args:
         message: The message to send
-        force: If True, send even during maintenance mode
+        force: If True, send even during maintenance mode without prefix
     """
     try:
         # Check if we're in maintenance mode
         from modules.maintenance import is_maintenance_mode
         maintenance_mode = is_maintenance_mode()
         
-        # Only broadcast to all channels if not in maintenance mode or if forced
-        if not maintenance_mode or force:
-            # Send to all configured channels
+        if maintenance_mode and not force:
+            # During maintenance, add a prefix to the message
+            prefixed_message = f"[⚙️] {message}"
+            log(f"Sending maintenance-prefixed message: {prefixed_message}")
+            
+            # Send to all configured channels with the prefix
+            for channel in discord_bot.channels:
+                discord_bot.send_message(channel, prefixed_message)
+        else:
+            # Normal case or forced message - send to all channels without prefix
             for channel in discord_bot.channels:
                 discord_bot.send_message(channel, message)
-        
-        # During maintenance, always send to console channel with prefix
-        if maintenance_mode and not force:
-            log(f"Skipping broadcast during maintenance: {message}")
-            
-            # Always send to console channel during maintenance
-            discord_bot.send_message(discord_bot.console_channel, f"[MAINTENANCE] {message}")
     except Exception as e:
         log(f"Error in broadcast_discord_message: {e}")
 
