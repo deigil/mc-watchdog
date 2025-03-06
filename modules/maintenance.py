@@ -85,6 +85,14 @@ class MaintenanceManager:
     def exit_maintenance(self):
         """Exit maintenance mode"""
         try:
+            # First check if we should actually exit maintenance
+            current_day = datetime.now().weekday()
+            
+            # If it's Tuesday (1) or Thursday (3), we should stay in maintenance mode
+            if current_day in [1, 3]:
+                log("Today is a full maintenance day (Tuesday or Thursday), staying in maintenance mode")
+                return False
+            
             log("Exiting maintenance mode")
             self.is_in_maintenance = False
             

@@ -190,19 +190,24 @@ class SleepManager:
             log("Reset manual_stop flag for morning wake-up")
             
             # Check if we're in maintenance mode
-            if is_maintenance_mode() and datetime.now().time() >= time(7, 59):
+            current_day = datetime.now().weekday()
+            
+            # If it's morning after maintenance day (Wednesday or Friday), exit maintenance
+            if is_maintenance_mode() and current_day in [2, 4]:
                 log("It's morning after maintenance day, exiting maintenance mode")
                 maintenance_manager.exit_maintenance()
                 
                 # Send good morning message with maintenance ended notification
                 broadcast_discord_message("🌞 Good morning! Maintenance period has ended. The server is ready to wake up on the first connection attempt.")
                 log("Morning wake-up and maintenance end message sent")
+            elif is_maintenance_mode():
+                # If it's still a maintenance day, just log it
+                log(f"Current day is {current_day}, staying in maintenance mode")
+                # No message needed during maintenance days
             elif not is_maintenance_mode():
                 # Send regular good morning message
                 broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
                 log("Morning wake-up message sent")
-            else:
-                log("Skipping morning message during maintenance mode")
             
             return True
         except Exception as e:

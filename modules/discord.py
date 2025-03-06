@@ -35,20 +35,30 @@ class DiscordBot:
             
             # Check if it's past 8 AM on a maintenance day
             current_time = datetime.now().time()
+            current_day = datetime.now().weekday()
             morning_time = time(8, 0)
             
-            # If it's past 8 AM and we're in maintenance mode, we should exit maintenance
+            # If it's past 8 AM and we're in maintenance mode, check if we should exit
             if is_maintenance_mode() and current_time >= morning_time:
-                log("It's morning after maintenance day, updating bot status to normal mode")
-                await self.client.change_presence(
-                    status=discord.Status.online, 
-                    activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
-                )
-                log("Bot status set to online with 'Watching a POG Vault!' activity")
-                
-                # Import here to avoid circular dependency
-                from modules.maintenance import maintenance_manager
-                maintenance_manager.exit_maintenance()
+                # Only exit maintenance on Wednesday (2) or Friday (4) mornings
+                if current_day in [2, 4]:
+                    log("It's morning after maintenance day, updating bot status to normal mode")
+                    await self.client.change_presence(
+                        status=discord.Status.online, 
+                        activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+                    )
+                    log("Bot status set to online with 'Watching a POG Vault!' activity")
+                    
+                    # Import here to avoid circular dependency
+                    from modules.maintenance import maintenance_manager
+                    maintenance_manager.exit_maintenance()
+                else:
+                    log(f"Current day is {current_day}, staying in maintenance mode")
+                    await self.client.change_presence(
+                        status=discord.Status.online,
+                        activity=discord.Activity(type=discord.ActivityType.playing, name="Architect Vault ⚙️")
+                    )
+                    log("Bot status set to online with 'Playing Architect Vault' activity")
             elif is_maintenance_mode():
                 await self.client.change_presence(
                     status=discord.Status.online,
