@@ -6,6 +6,7 @@ from config import DISCORD_TOKEN, DISCORD_CHANNELS, CONSOLE_CHANNEL
 from modules.logging import log
 from modules.server import server_manager
 import discord
+from datetime import datetime
 
 class DiscordBot:
     def __init__(self):
@@ -31,7 +32,24 @@ class DiscordBot:
             
             # Set appropriate status based on maintenance mode
             from modules.maintenance import is_maintenance_mode
-            if is_maintenance_mode():
+            
+            # Check if it's past 8 AM on a maintenance day
+            current_time = datetime.now().time()
+            morning_time = time(8, 0)
+            
+            # If it's past 8 AM and we're in maintenance mode, we should exit maintenance
+            if is_maintenance_mode() and current_time >= morning_time:
+                log("It's morning after maintenance day, updating bot status to normal mode")
+                await self.client.change_presence(
+                    status=discord.Status.online, 
+                    activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+                )
+                log("Bot status set to online with 'Watching a POG Vault!' activity")
+                
+                # Import here to avoid circular dependency
+                from modules.maintenance import maintenance_manager
+                maintenance_manager.exit_maintenance()
+            elif is_maintenance_mode():
                 await self.client.change_presence(
                     status=discord.Status.online,
                     activity=discord.Activity(type=discord.ActivityType.playing, name="Architect Vault ⚙️")
@@ -108,9 +126,24 @@ class DiscordBot:
                                     log("Received start command from Discord")
                                     self.send_message(self.console_channel, "⚙️ Processing start command...")
                                     
+                                    # Check if we're in maintenance mode
+                                    from modules.maintenance import is_maintenance_mode
+                                    if is_maintenance_mode():
+                                        self.send_message(self.console_channel, "⚠️ Starting server during maintenance mode")
+                                    
                                     if not self.server_manager.check_server():
+                                        # Get current container status
+                                        container_status = self.server_manager.get_container_status()
+                                        
                                         if self.server_manager.start_server():
                                             self.send_message(self.console_channel, "✅ Server started successfully!")
+                                            
+                                            # Reset manual_stop flag to ensure listening works
+                                            self.server_manager.manual_stop = False
+                                            
+                                            # If in maintenance mode, add a note
+                                            if is_maintenance_mode():
+                                                self.send_message(self.console_channel, "⚠️ Note: Server started in maintenance mode")
                                         else:
                                             self.send_message(self.console_channel, "❌ Failed to start server!")
                                     else:
@@ -146,6 +179,33 @@ class DiscordBot:
                                         self.send_message(self.console_channel, "✅ Sleep initiated successfully!")
                                     else:
                                         self.send_message(self.console_channel, "❌ Failed to initiate sleep!")
+                                
+                                elif content == '/players':
+                                    log("Received players command from Discord")
+                                    self.send_message(self.console_channel, "⚙️ Checking for players via server logs...")
+                                    
+                                    # Check if server is running
+                                    if not self.server_manager.check_server():
+                                        self.send_message(self.console_channel, "ℹ️ Server is not running")
+                                        continue
+                                    
+                                    # Get player information
+                                    is_empty, online_players = self.server_manager.check_server_empty(return_players=True)
+                                    
+                                    if is_empty:
+                                        self.send_message(self.console_channel, "ℹ️ No players currently online")
+                                    else:
+                                        # Format the player list nicely
+                                        player_list = ", ".join(online_players)
+                                        player_count = len(online_players)
+                                        
+                                        # Create a nice message with emoji
+                                        if player_count == 1:
+                                            message = f"✅ **1 player online**: {player_list}"
+                                        else:
+                                            message = f"✅ **{player_count} players online**: {player_list}"
+                                        
+                                        self.send_message(self.console_channel, message)
                     
                     time.sleep(2)  # Wait 2 seconds between checks
                     
@@ -156,53 +216,6 @@ class DiscordBot:
                     
         except Exception as e:
             log(f"Fatal error in Discord monitor: {e}")
-
-    def get_player_count(self):
-        """Get player count from bot status"""
-        try:
-            # Find the WOLDS BOT by its user ID
-            bot = self.client.get_user(1336788464041066506)  # WOLDS BOT ID
-            
-            if not bot:
-                log("Could not find WOLDS BOT")
-                return 0
-            
-            if not bot.activity:
-                log("WOLDS BOT has no activity status - server may be offline")
-                return 0
-            
-            # Parse the activity status
-            status_text = bot.activity.name
-            log(f"Bot status: {status_text}")
-            
-            # Check for offline status
-            if "offline" in status_text.lower():
-                log("Server is offline according to status")
-                return 0
-            
-            # Check for booting status
-            if "booting" in status_text.lower():
-                log("Server is booting according to status")
-                return 0
-            
-            # Normal case: "X players"
-            if "players" in status_text:
-                try:
-                    # Extract the number before "players"
-                    count = int(status_text.split("players")[0].strip())
-                    log(f"Extracted player count: {count}")
-                    return count
-                except ValueError:
-                    log(f"Could not parse player count from status: {status_text}")
-                    return 0
-            
-            # If we get here, the status text doesn't match expected formats
-            log(f"Unrecognized status format: {status_text}")
-            return 0
-            
-        except Exception as e:
-            log(f"Error getting player count from Discord: {e}")
-            return 0
 
     def run(self):
         """Start the Discord bot"""

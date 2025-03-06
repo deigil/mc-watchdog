@@ -3,6 +3,8 @@ import schedule
 import time
 import os
 from modules.logging import log
+import asyncio
+import discord
 
 class MaintenanceManager:
     def __init__(self):
@@ -79,6 +81,39 @@ class MaintenanceManager:
         # Add actual maintenance initiation at 23:59
         schedule.every().monday.at("23:59").do(self.initiate_maintenance)
         schedule.every().wednesday.at("23:59").do(self.initiate_maintenance)
+
+    def exit_maintenance(self):
+        """Exit maintenance mode"""
+        try:
+            log("Exiting maintenance mode")
+            self.is_in_maintenance = False
+            
+            # Remove the maintenance mode marker file if it exists
+            maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
+            if os.path.exists(maintenance_file):
+                os.remove(maintenance_file)
+                log("Removed maintenance mode marker file")
+            
+            # Update Discord bot status
+            from modules.discord import discord_bot
+            if discord_bot and discord_bot.client and discord_bot.client.is_ready():
+                asyncio.run_coroutine_threadsafe(
+                    discord_bot.client.change_presence(
+                        status=discord.Status.online, 
+                        activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+                    ),
+                    discord_bot.client.loop
+                )
+                log("Updated bot status to normal mode")
+            
+            # Send maintenance ended message
+            from modules.discord import broadcast_discord_message
+            broadcast_discord_message("✅ **MAINTENANCE COMPLETED**\nServer is now available!", force=True)
+            
+            return True
+        except Exception as e:
+            log(f"Error exiting maintenance mode: {e}")
+            return False
 
 # Create singleton instance
 maintenance_manager = MaintenanceManager()

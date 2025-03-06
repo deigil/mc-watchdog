@@ -80,25 +80,53 @@ class ServerManager:
             time.sleep(2)
             
             # Check container status first
-            if self.get_container_status() != "running":
-                subprocess.run(["docker", "start", self.container], check=True)
-                from modules.discord import broadcast_discord_message
-                
-                # Always send startup message
-                broadcast_discord_message("🚀 Server is starting up!")
-                
-                log("Starting Minecraft server...")
-                
-                # Wait for server to start (3 minutes timeout)
-                for _ in range(180):
-                    if self.check_server():
-                        log("Server has started successfully!")
+            container_status = self.get_container_status()
+            log(f"Current container status: {container_status}")
+            
+            if container_status != "running":
+                try:
+                    # Log the exact command we're about to run
+                    start_cmd = ["docker", "start", self.container]
+                    log(f"Executing command: {' '.join(start_cmd)}")
+                    
+                    # Run with shell=True to match terminal behavior
+                    result = subprocess.run(
+                        ' '.join(start_cmd),
+                        shell=True,
+                        capture_output=True, 
+                        text=True
+                    )
+                    
+                    # Log the complete result
+                    log(f"Command exit code: {result.returncode}")
+                    log(f"Command stdout: {result.stdout}")
+                    log(f"Command stderr: {result.stderr}")
+                    
+                    if result.returncode != 0:
                         self._starting = False
-                        return True
-                    time.sleep(1)
-                
-                self._starting = False
-                raise Exception("Server failed to start after waiting period")
+                        raise Exception(f"Docker start command failed with exit code {result.returncode}: {result.stderr}")
+                    
+                    # If we get here, the command succeeded
+                    from modules.discord import broadcast_discord_message
+                    
+                    # Always send startup message
+                    broadcast_discord_message("🚀 Server is starting up!")
+                    
+                    log("Starting Minecraft server...")
+                    
+                    # Wait for server to start (3 minutes timeout)
+                    for _ in range(180):
+                        if self.check_server():
+                            log("Server has started successfully!")
+                            self._starting = False
+                            return True
+                        time.sleep(1)
+                    
+                    self._starting = False
+                    raise Exception("Server failed to start after waiting period")
+                except Exception as e:
+                    self._starting = False
+                    raise e  # Re-raise to be caught by outer try/except
             else:
                 log("Container already running")
                 self._starting = False
@@ -142,34 +170,24 @@ class ServerManager:
             self.release_port(force=True)
             return False
 
-    def check_server_empty(self):
-        """Check if the server has no players by reading the Discord bot status"""
-        try:
-            # First check if server is running
-            if self.get_container_status() != "running":
-                log("Server is not running, considering it empty")
-                return True
-            
-            from modules.discord import discord_bot
-            
-            # Get player count from Discord bot activity
-            player_count = discord_bot.get_player_count()
-            
-            if player_count > 0:
-                log(f"Discord bot reports {player_count} player(s) online")
-                return False
-            
-            log("Discord bot reports no players online")
-            return True
-            
-        except Exception as e:
-            log(f"Error checking player count from Discord: {e}")
-            # Fall back to log parsing method if Discord check fails
-            return self._check_server_empty_from_logs()
+    def check_server_empty(self, return_players=False):
+        """
+        Check if the server has no players by parsing server logs
         
-    def _check_server_empty_from_logs(self):
-        """Original method to check if server is empty by parsing logs"""
+        Args:
+            return_players: If True, return (is_empty, online_players_list) instead of just is_empty
+        """
         try:
+            log("Checking if server is empty...")
+            
+            # First check if server is running
+            container_status = self.get_container_status()
+            if container_status != "running":
+                log("Server is not running, considering it empty")
+                return (True, []) if return_players else True
+            
+            # Parse logs to check for players
+            log("Checking server logs for player activity...")
             mc_log_path = MC_LOG
             active_players = {}  # Track each player's state: {player: {"state": "online/offline", "last_action": timestamp}}
             
@@ -178,31 +196,35 @@ class ServerManager:
                 lines = f.readlines()
                 recent_lines = lines[-1000:] if len(lines) > 1000 else lines
                 
+                log(f"Analyzing {len(recent_lines)} recent log lines")
+                
                 for line in recent_lines:
-                    if "[Server thread/INFO] [net.minecraft.server.dedicated.DedicatedServer/]:" in line:
+                    if "[Server thread/INFO]" in line:
                         try:
-                            # Extract timestamp from [28Feb2025 09:40:21.357] format
-                            timestamp = line.split("]")[0].strip("[")
+                            # Extract timestamp from log line
+                            timestamp_part = line.split("]")[0].strip("[")
                             
+                            # Check for player join events
                             if "joined the game" in line:
-                                player = line.split("DedicatedServer/]: ")[1].split(" joined")[0]
+                                player = line.split("]: ")[1].split(" joined")[0]
                                 active_players[player] = {
                                     "state": "online",
-                                    "last_action": timestamp,
+                                    "last_action": timestamp_part,
                                     "last_event": "join"
                                 }
-                                log(f"Player {player} joined at {timestamp}")
+                                log(f"Log shows player {player} joined at {timestamp_part}")
                                 
+                            # Check for player leave events
                             elif "left the game" in line:
-                                player = line.split("DedicatedServer/]: ")[1].split(" left")[0]
+                                player = line.split("]: ")[1].split(" left")[0]
                                 if player in active_players:
                                     active_players[player] = {
                                         "state": "offline",
-                                        "last_action": timestamp,
+                                        "last_action": timestamp_part,
                                         "last_event": "leave"
                                     }
-                                    log(f"Player {player} left at {timestamp}")
-                                
+                                    log(f"Log shows player {player} left at {timestamp_part}")
+                            
                         except IndexError:
                             continue  # Skip malformed lines
             
@@ -213,15 +235,16 @@ class ServerManager:
             ]
             
             if online_players:
-                log(f"Currently online players: {', '.join(online_players)}")
-                return False
+                log(f"Log analysis found online players: {', '.join(online_players)}")
+                return (False, online_players) if return_players else False
             
-            log("No active players detected")
-            return True
+            log("Log analysis found no active players")
+            return (True, []) if return_players else True
             
         except Exception as e:
-            log(f"Error checking logs for players: {e}")
-            return False  # Assume not empty if we can't check
+            log(f"Error checking if server empty: {e}")
+            log("Assuming server is NOT empty due to error")
+            return (False, []) if return_players else False  # Assume not empty if we can't check
 
     def listen_for_connection(self):
         """Only listen for connections if not manually stopped"""
@@ -285,11 +308,29 @@ class ServerManager:
     def get_container_status(self):
         """Get Docker container status"""
         try:
-            result = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", self.container], 
-                                  capture_output=True, text=True, check=True)
-            return result.stdout.strip()
+            # Use shell=True to match terminal behavior
+            result = subprocess.run(
+                f"docker inspect -f '{{{{.State.Status}}}}' {self.container}",
+                shell=True,
+                capture_output=True, 
+                text=True
+            )
+            
+            if result.returncode == 0:
+                status = result.stdout.strip().replace("'", "")  # Remove any quotes
+                
+                # Only log if status changed or if this is the first check
+                if not hasattr(self, '_last_logged_status') or self._last_logged_status != status:
+                    log(f"Container status: {status}")
+                    self._last_logged_status = status
+                
+                return status
+            else:
+                # Always log errors
+                log(f"Error getting container status: {result.stderr}")
+                return "unknown"
         except Exception as e:
-            log(f"Error getting container status: {e}")
+            log(f"Exception getting container status: {e}")
             return "unknown"
 
 # Create singleton instance

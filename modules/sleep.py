@@ -4,7 +4,7 @@ import os
 from modules.logging import log
 from modules.server import server_manager
 from modules.discord import broadcast_discord_message, discord_bot
-from modules.maintenance import is_maintenance_mode
+from modules.maintenance import is_maintenance_mode, maintenance_manager
 from config import SLEEP_TRIGGER_DIR, SLEEP_TRIGGER_FILE
 import threading
 
@@ -169,9 +169,9 @@ class SleepManager:
         schedule.every().day.at("23:59").do(self.check_and_sleep)
         log("Sleep checks scheduled for 11:59 PM")
         
-        # Add morning wake-up reset
-        schedule.every().day.at("08:00").do(self.morning_reset)
-        log("Morning reset scheduled for 8:00 AM")
+        # Add morning wake-up reset at 7:59 AM instead of 8:00 AM
+        schedule.every().day.at("07:59").do(self.morning_reset)
+        log("Morning reset scheduled for 7:59 AM")
         
         if self.is_sleep_time():
             log("Watchdog started during sleep hours, initiating immediate sleep check")
@@ -189,9 +189,16 @@ class SleepManager:
             server_manager.manual_stop = False
             log("Reset manual_stop flag for morning wake-up")
             
-            # Check if we're in maintenance mode before sending message
-            if not is_maintenance_mode():
-                # Send good morning message
+            # Check if we're in maintenance mode
+            if is_maintenance_mode() and datetime.now().time() >= time(7, 59):
+                log("It's morning after maintenance day, exiting maintenance mode")
+                maintenance_manager.exit_maintenance()
+                
+                # Send good morning message with maintenance ended notification
+                broadcast_discord_message("🌞 Good morning! Maintenance period has ended. The server is ready to wake up on the first connection attempt.")
+                log("Morning wake-up and maintenance end message sent")
+            elif not is_maintenance_mode():
+                # Send regular good morning message
                 broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
                 log("Morning wake-up message sent")
             else:
