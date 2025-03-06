@@ -190,6 +190,9 @@ class SleepManager:
             log("Reset manual_stop flag for morning wake-up")
             
             # Check if we're in maintenance mode
+            from modules.maintenance import is_maintenance_mode, maintenance_manager
+            
+            # Get current day of week
             current_day = datetime.now().weekday()
             
             # If it's morning after maintenance day (Wednesday or Friday), exit maintenance

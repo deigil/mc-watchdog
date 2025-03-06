@@ -30,41 +30,19 @@ class DiscordBot:
             log(f'Logged in as {self.client.user}')
             log(f'Bot is now visible as online in Discord')
             
-            # Set appropriate status based on maintenance mode
+            # Import maintenance functions
             from modules.maintenance import is_maintenance_mode
             
-            # Check if it's past 8 AM on a maintenance day
-            current_time = datetime.now().time()
-            current_day = datetime.now().weekday()
-            morning_time = time(8, 0)
+            # Check maintenance mode (this will also ensure correct state based on day)
+            in_maintenance = is_maintenance_mode()
             
-            # If it's past 8 AM and we're in maintenance mode, check if we should exit
-            if is_maintenance_mode() and current_time >= morning_time:
-                # Only exit maintenance on Wednesday (2) or Friday (4) mornings
-                if current_day in [2, 4]:
-                    log("It's morning after maintenance day, updating bot status to normal mode")
-                    await self.client.change_presence(
-                        status=discord.Status.online, 
-                        activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
-                    )
-                    log("Bot status set to online with 'Watching a POG Vault!' activity")
-                    
-                    # Import here to avoid circular dependency
-                    from modules.maintenance import maintenance_manager
-                    maintenance_manager.exit_maintenance()
-                else:
-                    log(f"Current day is {current_day}, staying in maintenance mode")
-                    await self.client.change_presence(
-                        status=discord.Status.online,
-                        activity=discord.Activity(type=discord.ActivityType.playing, name="Architect Vault ⚙️")
-                    )
-                    log("Bot status set to online with 'Playing Architect Vault' activity")
-            elif is_maintenance_mode():
+            # Set appropriate status based on maintenance mode
+            if in_maintenance:
                 await self.client.change_presence(
                     status=discord.Status.online,
                     activity=discord.Activity(type=discord.ActivityType.playing, name="Architect Vault ⚙️")
                 )
-                log("Bot status set to online with 'Playing Architect Vault' activity")
+                log("Bot status set to maintenance mode")
             else:
                 await self.client.change_presence(
                     status=discord.Status.online, 
@@ -216,6 +194,52 @@ class DiscordBot:
                                             message = f"✅ **{player_count} players online**: {player_list}"
                                         
                                         self.send_message(self.console_channel, message)
+                                
+                                elif content == '/maintenance':
+                                    log("Received maintenance command from Discord")
+                                    self.send_message(self.console_channel, "⚙️ Checking maintenance status...")
+                                    
+                                    # Import maintenance functions
+                                    from modules.maintenance import is_maintenance_mode
+                                    
+                                    # Check current day
+                                    current_day = datetime.now().weekday()
+                                    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                                    
+                                    # Check maintenance status
+                                    in_maintenance = is_maintenance_mode()
+                                    
+                                    if in_maintenance:
+                                        # Determine when maintenance will end
+                                        if current_day == 1:  # Tuesday
+                                            end_day = "Wednesday"
+                                        elif current_day == 3:  # Thursday
+                                            end_day = "Friday"
+                                        else:
+                                            end_day = day_names[(current_day + 1) % 7]
+                                        
+                                        self.send_message(
+                                            self.console_channel, 
+                                            f"🔧 **MAINTENANCE MODE ACTIVE**\nToday is {day_names[current_day]}. Maintenance will end on {end_day} at 8:00 AM."
+                                        )
+                                    else:
+                                        # Determine when next maintenance will start
+                                        days_to_monday = (0 - current_day) % 7
+                                        days_to_wednesday = (2 - current_day) % 7
+                                        
+                                        if days_to_monday == 0:
+                                            next_maintenance = "tonight at 11:59 PM"
+                                        elif days_to_wednesday == 0:
+                                            next_maintenance = "tonight at 11:59 PM"
+                                        elif days_to_monday < days_to_wednesday:
+                                            next_maintenance = f"on Monday night (in {days_to_monday} days)"
+                                        else:
+                                            next_maintenance = f"on Wednesday night (in {days_to_wednesday} days)"
+                                        
+                                        self.send_message(
+                                            self.console_channel, 
+                                            f"✅ **NORMAL MODE**\nToday is {day_names[current_day]}. Next maintenance will begin {next_maintenance}."
+                                        )
                     
                     time.sleep(2)  # Wait 2 seconds between checks
                     
