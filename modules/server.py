@@ -114,19 +114,14 @@ class ServerManager:
                     
                     log("Starting Minecraft server...")
                     
-                    # Wait for server to start (3 minutes timeout)
+                    # Wait for server to start (4 minutes timeout)
                     server_started = False
-                    for i in range(180):
-                        if self.check_server():
-                            log("Server has started successfully!")
-                            broadcast_discord_message("✅ Server is now online and ready!")
-                            self._starting = False
-                            server_started = True
-                            return True
+                    for i in range(240):  # 4 minutes = 240 seconds
+                        # Check container health status first
+                        health_status = self.get_container_status()
                         
-                        # Every 30 seconds, check container health
+                        # Every 30 seconds, send a status update
                         if i > 0 and i % 30 == 0:
-                            health_status = self.get_container_status()
                             log(f"Server startup in progress... Health status: {health_status}")
                             
                             # If unhealthy after 30 seconds, consider it failed
@@ -138,15 +133,23 @@ class ServerManager:
                                 return False
                             
                             # If still starting after 2 minutes, send an update
-                            if i >= 120 and health_status in ["starting", None]:
+                            if i >= 120:
                                 log("Server is taking longer than usual to start...")
                                 broadcast_discord_message("⏳ Server is taking longer than usual to start...")
+                        
+                        # Only consider server ready when container is healthy AND port is responding
+                        if health_status == "healthy" and self.check_server():
+                            log("Server has started successfully and is healthy!")
+                            broadcast_discord_message("✅ Server is now online and ready!")
+                            self._starting = False
+                            server_started = True
+                            return True
                         
                         time.sleep(1)
                     
                     # If we get here, the server didn't start within the timeout
                     if not server_started:
-                        log("Server failed to start after waiting period")
+                        log("Server failed to start after 4 minute timeout")
                         
                         # Check final health status
                         health_status = self.get_container_status()
@@ -157,7 +160,7 @@ class ServerManager:
                         self.stop_server()
                         
                         # Send failure message with health status
-                        broadcast_discord_message(f"❌ Server failed to start after 3 minutes (status: {health_status})")
+                        broadcast_discord_message(f"❌ Server failed to start after 4 minutes (status: {health_status})")
                         
                         self._starting = False
                         return False
