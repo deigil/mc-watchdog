@@ -7,6 +7,8 @@ from modules.discord import broadcast_discord_message, discord_bot
 from modules.maintenance import is_maintenance_mode, maintenance_manager
 from config import SLEEP_TRIGGER_DIR, SLEEP_TRIGGER_FILE
 import threading
+import subprocess
+import sys
 
 class SleepManager:
     def __init__(self):
@@ -131,37 +133,31 @@ class SleepManager:
     def signal_windows_sleep(self):
         """Signal Windows to sleep by creating a trigger file"""
         try:
-            log(f"Attempting to create sleep trigger in directory: {SLEEP_TRIGGER_DIR}")
-            log(f"Full trigger file path: {SLEEP_TRIGGER_FILE}")
+            log("Using triggersleep.py to create sleep trigger")
             
-            # Ensure directory exists
-            if not os.path.exists(SLEEP_TRIGGER_DIR):
-                log(f"Sleep trigger directory does not exist, creating it")
-                os.makedirs(SLEEP_TRIGGER_DIR, exist_ok=True)
+            # Get path to triggersleep.py
+            script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "triggersleep.py")
             
-            # Write the trigger file with current timestamp
-            timestamp = datetime.now()
-            log(f"Writing timestamp to trigger file: {timestamp}")
+            # Run the script
+            result = subprocess.run([sys.executable, script_path], capture_output=True, text=True)
             
-            with open(SLEEP_TRIGGER_FILE, 'w') as f:
-                f.write(str(timestamp))
+            # Log output from script
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    log(f"triggersleep.py: {line}")
             
-            # Verify file was created
-            if os.path.exists(SLEEP_TRIGGER_FILE):
-                # Read back the file to verify content
-                with open(SLEEP_TRIGGER_FILE, 'r') as f:
-                    content = f.read().strip()
-                log(f"Verified trigger file creation. Content: {content}")
+            # Check if script succeeded
+            if result.returncode == 0:
+                log("Sleep trigger created successfully via triggersleep.py")
                 return True
             else:
-                log("Failed to verify sleep trigger file creation")
+                if result.stderr:
+                    log(f"Error from triggersleep.py: {result.stderr}")
+                log("Failed to create sleep trigger via triggersleep.py")
                 return False
                 
         except Exception as e:
-            log(f"Error creating sleep trigger: {e}")
-            log(f"Current working directory: {os.getcwd()}")
-            log(f"Directory exists: {os.path.exists(SLEEP_TRIGGER_DIR)}")
-            log(f"File path: {SLEEP_TRIGGER_FILE}")
+            log(f"Error running triggersleep.py: {e}")
             return False
 
     def schedule_sleep(self):
@@ -178,44 +174,34 @@ class SleepManager:
             self.check_and_sleep()
 
     def morning_reset(self):
-        """Reset sleep state and send good morning message"""
+        """Reset server state in the morning"""
         try:
-            log("Performing morning reset")
-            
-            # Reset sleep state
-            self.is_sleeping = False
-            
-            # Reset server manager manual stop flag
-            server_manager.manual_stop = False
-            log("Reset manual_stop flag for morning wake-up")
-            
             # Check if we're in maintenance mode
-            from modules.maintenance import is_maintenance_mode, maintenance_manager
+            from modules.maintenance import is_maintenance_mode
+            if is_maintenance_mode():
+                log("Morning reset - maintenance mode active")
+                broadcast_discord_message("🌅 Good morning! Server is in maintenance mode.")
+                return
+
+            # Send good morning message
+            log("Morning reset - normal operation")
+            broadcast_discord_message("🌅 Good morning! Server is ready to accept connections.")
+
+            # Reset manual stop flag to allow connections
+            from modules.server import server_manager
+            server_manager.manual_stop = False
             
-            # Get current day of week
-            current_day = datetime.now().weekday()
-            
-            # If it's morning after maintenance day (Wednesday or Friday), exit maintenance
-            if is_maintenance_mode() and current_day in [2, 4]:
-                log("It's morning after maintenance day, exiting maintenance mode")
-                maintenance_manager.exit_maintenance()
-                
-                # Send good morning message with maintenance ended notification
-                broadcast_discord_message("🌞 Good morning! Maintenance period has ended. The server is ready to wake up on the first connection attempt.")
-                log("Morning wake-up and maintenance end message sent")
-            elif is_maintenance_mode():
-                # If it's still a maintenance day, just log it
-                log(f"Current day is {current_day}, staying in maintenance mode")
-                # No message needed during maintenance days
-            elif not is_maintenance_mode():
-                # Send regular good morning message
-                broadcast_discord_message("🌞 Good morning! The server is ready to wake up on the first connection attempt.")
-                log("Morning wake-up message sent")
-            
-            return True
+            # Reset listening state to ensure we start fresh
+            if hasattr(server_manager, '_listening_active'):
+                delattr(server_manager, '_listening_active')
+            if hasattr(server_manager, '_listening_logged'):
+                delattr(server_manager, '_listening_logged')
+
+            # Start listening for connections
+            server_manager.listen_for_connection()
+
         except Exception as e:
             log(f"Error in morning reset: {e}")
-            return False
 
 # Create singleton instance
 sleep_manager = SleepManager()
