@@ -132,10 +132,9 @@ class ServerManager:
                                 self._starting = False
                                 return False
                             
-                            # If still starting after 2 minutes, send an update
-                            if i >= 120:
+                            # If still starting after 3 minutes, send an update
+                            if i >= 180:
                                 log("Server is taking longer than usual to start...")
-                                broadcast_discord_message("⏳ Server is taking longer than usual to start...")
                         
                         # Only consider server ready when container is healthy AND port is responding
                         if health_status == "healthy" and self.check_server():
