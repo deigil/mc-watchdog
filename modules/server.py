@@ -13,31 +13,70 @@ class ServerManager:
         self.manual_stop = False  # Add flag for manual stops
         self.last_server_state = True  # Add last server state
 
-    def check_server(self):
-        """Check if the Minecraft server is running"""
+    def check_container_health(self):
+        """Check if the container exists and is healthy"""
         try:
-            # First check if container is running
-            container_status = self.get_container_status()
-            if container_status != "running":
+            # Check if container exists and get its status
+            result = subprocess.run(
+                f"docker ps -a --filter name={self.container} --format '{{{{.Status}}}}'",
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                log(f"Error checking container status: {result.stderr}")
+                return False
+                
+            status = result.stdout.strip()
+            
+            # If container doesn't exist, status will be empty
+            if not status:
+                log(f"Container {self.container} does not exist")
+                return False
+                
+            # Check if container is running and healthy
+            if "Up" in status and "healthy" in status:
+                # Only log status changes
+                if not hasattr(self, '_last_health_status') or self._last_health_status != True:
+                    log(f"Container is healthy: {status}")
+                    self._last_health_status = True
+                return True
+            else:
+                # Only log status changes
+                if not hasattr(self, '_last_health_status') or self._last_health_status != False:
+                    log(f"Container is not healthy: {status}")
+                    self._last_health_status = False
+                return False
+                
+        except Exception as e:
+            log(f"Error checking container health: {e}")
+            return False
+
+    def check_server(self):
+        """Check if the Minecraft server is running and accepting connections"""
+        try:
+            # First check if container is running and healthy
+            if not self.check_container_health():
                 if self.last_server_state:  # If server was up before
-                    log(f"Server stopped unexpectedly. Docker container status: {container_status}")
-                    self.last_server_state = False  # Update state to prevent multiple messages
+                    log(f"Server stopped unexpectedly. Container is not healthy.")
+                    self.last_server_state = False
                     self.release_port(force=True)
                 return False
 
-            # Then check if port is available
+            # Then try to connect to the port
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(3)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
-                    sock.bind(("0.0.0.0", self.port))
-                    # If we can bind, server is not listening
-                    self.last_server_state = False
-                    return False
-                except socket.error:
-                    # Can't bind, server is up
+                    # Try to connect to the port
+                    sock.connect(("localhost", self.port))
+                    # If we can connect, server is up
                     self.last_server_state = True
                     return True
+                except (socket.error, ConnectionRefusedError):
+                    # Can't connect, server is not ready
+                    self.last_server_state = False
+                    return False
                 
         except Exception as e:
             log(f"Error checking server: {e}")
@@ -80,10 +119,7 @@ class ServerManager:
             time.sleep(2)
             
             # Check container status first
-            container_status = self.get_container_status()
-            log(f"Current container status: {container_status}")
-            
-            if container_status != "running":
+            if not self.check_container_health():
                 try:
                     # Log the exact command we're about to run
                     start_cmd = ["docker", "start", self.container]
@@ -99,8 +135,10 @@ class ServerManager:
                     
                     # Log the complete result
                     log(f"Command exit code: {result.returncode}")
-                    log(f"Command stdout: {result.stdout}")
-                    log(f"Command stderr: {result.stderr}")
+                    if result.stdout.strip():
+                        log(f"Command stdout: {result.stdout}")
+                    if result.stderr.strip():
+                        log(f"Command stderr: {result.stderr}")
                     
                     if result.returncode != 0:
                         self._starting = False
@@ -116,61 +154,37 @@ class ServerManager:
                     
                     # Wait for server to start (4 minutes timeout)
                     server_started = False
-                    for i in range(240):  # 4 minutes = 240 seconds
-                        # Check container health status first
-                        health_status = self.get_container_status()
-                        
-                        # Every 30 seconds, send a status update
-                        if i > 0 and i % 30 == 0:
-                            log(f"Server startup in progress... Health status: {health_status}")
-                            
-                            # If unhealthy after 30 seconds, consider it failed
-                            if health_status == "unhealthy" and i >= 30:
-                                log("Container is unhealthy, server failed to start properly")
-                                broadcast_discord_message("❌ Server failed to start properly (unhealthy container)")
-                                self.stop_server()
-                                self._starting = False
-                                return False
-                            
-                            # If still starting after 3 minutes, send an update
-                            if i >= 180:
-                                log("Server is taking longer than usual to start...")
-                        
-                        # Only consider server ready when container is healthy AND port is responding
-                        if health_status == "healthy" and self.check_server():
-                            log("Server has started successfully and is healthy!")
-                            broadcast_discord_message("✅ Server is now online and ready!")
+                    start_time = time.time()
+                    
+                    while time.time() - start_time < 240:  # 4 minutes timeout
+                        # Check container health and server response
+                        if self.check_container_health() and self.check_server():
+                            log("Server has started successfully!")
                             self._starting = False
-                            server_started = True
                             return True
                         
                         time.sleep(1)
                     
                     # If we get here, the server didn't start within the timeout
-                    if not server_started:
-                        log("Server failed to start after 4 minute timeout")
-                        
-                        # Check final health status
-                        health_status = self.get_container_status()
-                        log(f"Final container health status: {health_status}")
-                        
-                        # Stop the container
-                        log("Stopping container due to failed start")
-                        self.stop_server()
-                        
-                        # Send failure message with health status
-                        broadcast_discord_message(f"❌ Server failed to start after 4 minutes (status: {health_status})")
-                        
-                        self._starting = False
-                        return False
+                    log("Server failed to start after 4 minute timeout")
+                    self.stop_server()
+                    self._starting = False
+                    return False
                     
                 except Exception as e:
                     self._starting = False
                     raise e  # Re-raise to be caught by outer try/except
             else:
-                log("Container already running")
-                self._starting = False
-                return True
+                log("Container already running and healthy")
+                if self.check_server():
+                    log("Server is already running and responding")
+                    self._starting = False
+                    return True
+                else:
+                    log("Container is healthy but server is not responding, stopping container...")
+                    self.stop_server()
+                    self._starting = False
+                    return False
             
         except Exception as e:
             self._starting = False
@@ -359,10 +373,11 @@ class ServerManager:
             if result.returncode == 0:
                 status = result.stdout.strip().replace("'", "")  # Remove any quotes
                 
-                # Only log if status changed or if this is the first check
-                if not hasattr(self, '_last_logged_status') or self._last_logged_status != status:
-                    log(f"Container status: {status}")
-                    self._last_logged_status = status
+                # Only log if status changed (ignoring timestamps in comparison)
+                current_state = status.split()[0] if status else "unknown"  # Get first word of status
+                if not hasattr(self, '_last_logged_state') or self._last_logged_state != current_state:
+                    log(f"Container state changed to: {status}")
+                    self._last_logged_state = current_state
                 
                 return status
             else:
