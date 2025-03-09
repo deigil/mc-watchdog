@@ -18,6 +18,7 @@ class DiscordBot:
             'Content-Type': 'application/json'
         }
         self.server_manager = server_manager
+        self._ready = False  # Track ready state
         
         # Setup Discord client
         intents = discord.Intents.default()
@@ -50,8 +51,7 @@ class DiscordBot:
                 )
                 log("Bot status set to online with 'Watching a POG Vault!' activity")
             
-            # Store the client in shared state if needed
-            # set_discord_client(self.client)
+            self._ready = True  # Mark bot as ready
         
         # Setup hook for initialization
         async def setup_hook():
@@ -61,9 +61,21 @@ class DiscordBot:
         # Assign the setup hook
         self.client.setup_hook = setup_hook
 
+    def is_ready(self):
+        """Check if the bot is ready"""
+        return self._ready and self.client and self.client.is_ready()
+
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
         try:
+            # Wait for bot to be ready before sending
+            if not self.is_ready():
+                log("Discord bot not ready, queuing message for retry")
+                time.sleep(2)  # Brief pause before retry
+                if not self.is_ready():  # Check again after pause
+                    log("Discord bot still not ready, message not sent")
+                    return False
+            
             data = {'content': message}
             response = requests.post(
                 f'https://discord.com/api/v10/channels/{channel_id}/messages',
@@ -73,11 +85,14 @@ class DiscordBot:
             
             if response.status_code == 200:
                 log(f"Discord message sent successfully to channel {channel_id}: {message}")
+                return True
             else:
                 log(f"Failed to send Discord message to channel {channel_id}: {response.status_code}")
+                return False
                 
         except Exception as e:
             log(f"Error sending Discord message: {e}")
+            return False
 
     def monitor_commands(self):
         """Monitor Discord console channel for commands"""
@@ -296,6 +311,10 @@ def broadcast_discord_message(message, force=False):
         from modules.maintenance import is_maintenance_mode
         maintenance_mode = is_maintenance_mode()
         
+        # Wait briefly for bot to be ready if it's not
+        if not discord_bot.is_ready():
+            time.sleep(2)
+        
         if maintenance_mode and not force:
             # During maintenance, add a prefix to the message
             prefixed_message = f"[⚙️] {message}"
@@ -308,14 +327,33 @@ def broadcast_discord_message(message, force=False):
             # Normal case or forced message - send to all channels without prefix
             for channel in discord_bot.channels:
                 discord_bot.send_message(channel, message)
+                
     except Exception as e:
         log(f"Error in broadcast_discord_message: {e}")
 
 def start_discord_monitor():
-    """Start the Discord command monitoring thread"""
-    from threading import Thread
-    monitor_thread = Thread(target=discord_bot.monitor_commands, daemon=True)
-    monitor_thread.start()
+    """Monitor Discord for commands"""
+    try:
+        while True:
+            try:
+                # Check Discord connection
+                if not discord_bot.is_ready():
+                    log("Discord bot not connected, retrying in 30 seconds")
+                    time.sleep(30)
+                    continue
+                
+                # Process commands
+                discord_bot.monitor_commands()
+                
+            except Exception as e:
+                log(f"Error monitoring Discord commands: {str(e)[:100]}")  # Truncate long error messages
+                time.sleep(30)  # Wait before retrying
+                
+            time.sleep(1)
+            
+    except Exception as e:
+        log(f"Fatal error in Discord monitor: {e}")
+        # Don't try to send Discord message here as it might be the source of the error
 
 def start_discord_bot():
     """Start the Discord bot"""
