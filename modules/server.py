@@ -10,8 +10,8 @@ class ServerManager:
     def __init__(self):
         self.port = SERVER_PORT
         self.container = DOCKER_CONTAINER
-        self.manual_stop = False  # Add flag for manual stops
-        self.last_server_state = True  # Add last server state
+        self.manual_stop = False  # Flag for manual stops
+        self.last_server_state = True  # Last server state
 
     def check_container_health(self):
         """Check if the container exists and is healthy"""
@@ -203,7 +203,6 @@ class ServerManager:
                     if self.get_container_status() == "exited":
                         self.release_port(force=True)
                         self.manual_stop = False  # Reset manual stop to allow for new connections
-                        self._listening_active = False  # Reset listening state for new connections
                         return True
                     time.sleep(1)
                 
@@ -213,7 +212,6 @@ class ServerManager:
                     if self.get_container_status() == "exited":
                         self.release_port(force=True)
                         self.manual_stop = False  # Reset manual stop to allow for new connections
-                        self._listening_active = False  # Reset listening state for new connections
                         return True
                     time.sleep(1)
                 
@@ -224,84 +222,10 @@ class ServerManager:
             self.release_port(force=True)
             return False
 
-    def check_server_empty(self, return_players=False):
-        """
-        Check if the server has no players by parsing server logs
-        
-        Args:
-            return_players: If True, return (is_empty, online_players_list) instead of just is_empty
-        """
-        try:
-            log("Checking if server is empty...")
-            
-            # First check if server is running
-            container_status = self.get_container_status()
-            if container_status != "running":
-                log("Server is not running, considering it empty")
-                return (True, []) if return_players else True
-            
-            # Parse logs to check for players
-            log("Checking server logs for player activity...")
-            mc_log_path = MC_LOG
-            active_players = {}  # Track each player's state: {player: {"state": "online/offline", "last_action": timestamp}}
-            
-            with open(mc_log_path, 'r') as f:
-                # Start from end and read last 1000 lines (configurable)
-                lines = f.readlines()
-                recent_lines = lines[-1000:] if len(lines) > 1000 else lines
-                
-                log(f"Analyzing {len(recent_lines)} recent log lines")
-                
-                for line in recent_lines:
-                    if "[Server thread/INFO]" in line:
-                        try:
-                            # Extract timestamp from log line
-                            timestamp_part = line.split("]")[0].strip("[")
-                            
-                            # Check for player join events
-                            if "joined the game" in line:
-                                player = line.split("]: ")[1].split(" joined")[0]
-                                active_players[player] = {
-                                    "state": "online",
-                                    "last_action": timestamp_part,
-                                    "last_event": "join"
-                                }
-                                log(f"Log shows player {player} joined at {timestamp_part}")
-                                
-                            # Check for player leave events
-                            elif "left the game" in line:
-                                player = line.split("]: ")[1].split(" left")[0]
-                                if player in active_players:
-                                    active_players[player] = {
-                                        "state": "offline",
-                                        "last_action": timestamp_part,
-                                        "last_event": "leave"
-                                    }
-                                    log(f"Log shows player {player} left at {timestamp_part}")
-                            
-                        except IndexError:
-                            continue  # Skip malformed lines
-            
-            # Check for any online players
-            online_players = [
-                player for player, data in active_players.items()
-                if data["state"] == "online"
-            ]
-            
-            if online_players:
-                log(f"Log analysis found online players: {', '.join(online_players)}")
-                return (False, online_players) if return_players else False
-            
-            log("Log analysis found no active players")
-            return (True, []) if return_players else True
-            
-        except Exception as e:
-            log(f"Error checking if server empty: {e}")
-            log("Assuming server is NOT empty due to error")
-            return (False, []) if return_players else False  # Assume not empty if we can't check
+    
 
     def listen_for_connection(self):
-        """Only listen for connections if not manually stopped"""
+        """Listen for connection attempts to start the server"""
         if self.manual_stop:
             return False
         
@@ -313,17 +237,14 @@ class ServerManager:
         
         # Check if we're in maintenance mode
         from modules.maintenance import is_maintenance_mode
+        if is_maintenance_mode():
+            return False
         
         # Send connection attempt message only when we start listening for the first time
-        # and not in maintenance mode
-        if (not hasattr(self, '_listening_active') or not self._listening_active) and not is_maintenance_mode():
+        if not hasattr(self, '_listening_active') or not self._listening_active:
             log("Starting new listening period")
             from modules.discord import broadcast_discord_message
             broadcast_discord_message("💤 Next connection attempt will wake up server!")
-            self._listening_active = True
-        elif not hasattr(self, '_listening_active') or not self._listening_active:
-            # Just log without sending message during maintenance
-            log("Starting new listening period (maintenance mode - no message sent)")
             self._listening_active = True
         
         sock = None
@@ -347,7 +268,7 @@ class ServerManager:
                 conn.close()
                 self._listening_logged = False  # Reset for next listen cycle
                 delattr(self, '_listening_active')  # Use delattr instead of setting to False
-                log("Connection received, starting server...")  # Added log message
+                log("Connection received, starting server...")
                 return True
             except socket.timeout:
                 return False
@@ -401,13 +322,10 @@ def start_server():
 def stop_server():
     return server_manager.stop_server()
 
-def check_server_empty():
-    return server_manager.check_server_empty()
-
 def listen_for_connection():
     return server_manager.listen_for_connection()
 
-# Instead, define a helper function to check maintenance day
+# Helper function to check maintenance day
 def _is_maintenance_day():
     """Check if it's a maintenance day (Tuesday or Thursday)"""
     return datetime.now().weekday() in [1, 3]

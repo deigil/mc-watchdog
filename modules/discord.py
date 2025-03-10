@@ -164,25 +164,6 @@ class DiscordBot:
                                     else:
                                         self.send_message(self.console_channel, "ℹ️ Server is already stopped!")
                                     
-                                elif content == '/sleep':
-                                    log("Received sleep command from Discord")
-                                    self.send_message(self.console_channel, "⚙️ Processing sleep command...")
-                                    
-                                    # Import sleep_manager and use its initiate_sleep method directly
-                                    from modules.sleep import sleep_manager
-                                    
-                                    # The initiate_sleep method already handles:
-                                    # - Checking if server is empty
-                                    # - Stopping the server if it's running
-                                    # - Creating the sleep trigger file
-                                    # - Setting manual_stop flag
-                                    if sleep_manager.initiate_sleep("manual"):
-                                        # Only send to console channel, not to all channels
-                                        self.send_message(self.console_channel, "💤 Server is going to sleep...")
-                                        self.send_message(self.console_channel, "✅ Sleep initiated successfully!")
-                                    else:
-                                        self.send_message(self.console_channel, "❌ Failed to initiate sleep!")
-                                
                                 elif content == '/players':
                                     log("Received players command from Discord")
                                     self.send_message(self.console_channel, "⚙️ Checking for players via server logs...")

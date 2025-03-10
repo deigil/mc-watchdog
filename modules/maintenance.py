@@ -1,6 +1,7 @@
 from datetime import datetime, time
 import schedule
 import os
+import time as time_module
 from modules.logging import log
 import asyncio
 import discord
@@ -8,6 +9,7 @@ import discord
 class MaintenanceManager:
     def __init__(self):
         self.is_in_maintenance = False
+        self.maintenance_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "maintenance_mode")
 
     def is_maintenance_day(self):
         """Check if it's a maintenance day (Tuesday or Thursday)"""
@@ -19,8 +21,7 @@ class MaintenanceManager:
         Also ensures maintenance mode is active on maintenance days (Tuesday and Thursday)
         """
         try:
-            maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
-            file_exists = os.path.exists(maintenance_file)
+            file_exists = os.path.exists(self.maintenance_file)
             
             # Check if today is a maintenance day (Tuesday or Thursday)
             current_day = datetime.now().weekday()
@@ -31,7 +32,7 @@ class MaintenanceManager:
                 log(f"Today is a full maintenance day (day {current_day}: {'Tuesday' if current_day == 1 else 'Thursday'}) but maintenance file is missing")
                 
                 # Create the maintenance file
-                with open(maintenance_file, 'w') as f:
+                with open(self.maintenance_file, 'w') as f:
                     f.write(str(datetime.now()))
                 
                 log("Created maintenance file for maintenance day")
@@ -60,7 +61,7 @@ class MaintenanceManager:
                 if current_day in [2, 4] and datetime.now().time() >= time(8, 0):
                     log("It's after maintenance period but file still exists, removing it")
                     try:
-                        os.remove(maintenance_file)
+                        os.remove(self.maintenance_file)
                         log("Removed maintenance file after maintenance period")
                         self.is_in_maintenance = False
                         return False
@@ -96,28 +97,29 @@ class MaintenanceManager:
             
             # Import here to avoid circular dependency
             from modules.server import server_manager
-            from modules.sleep import sleep_manager
             from modules.discord import broadcast_discord_message
             
             # Check if server is empty, if not, wait until it is
             while not server_manager.check_server_empty():
                 log("Server not empty, waiting 5 minutes...")
-                time.sleep(300)
+                broadcast_discord_message("⚠️ Server entering maintenance mode soon. Please log off.")
+                time_module.sleep(300)  # Wait 5 minutes
             
-            log("Server is empty, proceeding with maintenance shutdown")
-            
-            # Use sleep manager to handle the shutdown process
-            if sleep_manager.initiate_sleep("maintenance"):
-                maintenance_msg = "🔧 **MAINTENANCE MODE**\n"
-                maintenance_msg += f"Server will be down until {('Wednesday' if datetime.now().weekday() == 0 else 'Friday')} 8 AM"
-                
-                # Force send to all channels even during maintenance
-                broadcast_discord_message(maintenance_msg, force=True)
-                
-                # Create a maintenance mode marker file
-                maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
-                with open(maintenance_file, 'w') as f:
-                    f.write(str(datetime.now()))
+            # Stop the server
+            if server_manager.check_server():
+                if server_manager.stop_server():
+                    log("Server stopped for maintenance")
+                    
+                    # Create a maintenance mode marker file
+                    with open(self.maintenance_file, 'w') as f:
+                        f.write(str(datetime.now()))
+                    
+                    maintenance_msg = "🔧 **MAINTENANCE MODE**\n"
+                    maintenance_msg += f"Server will be down until {('Wednesday' if datetime.now().weekday() == 0 else 'Friday')} 8 AM"
+                    broadcast_discord_message(maintenance_msg, force=True)
+                else:
+                    log("Failed to stop server for maintenance")
+                    broadcast_discord_message("⚠️ Failed to stop server for maintenance!")
             
         except Exception as e:
             log(f"Error during maintenance: {e}")
@@ -159,9 +161,8 @@ class MaintenanceManager:
             self.is_in_maintenance = False
             
             # Remove the maintenance mode marker file if it exists
-            maintenance_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "maintenance_mode")
-            if os.path.exists(maintenance_file):
-                os.remove(maintenance_file)
+            if os.path.exists(self.maintenance_file):
+                os.remove(self.maintenance_file)
                 log("Removed maintenance mode marker file")
             
             # Update Discord bot status

@@ -12,7 +12,6 @@ from modules.discord import discord_bot, broadcast_discord_message, start_discor
 from modules.server import server_manager
 from modules.maintenance import maintenance_manager
 from modules.maintenance import is_maintenance_time, is_maintenance_day, is_maintenance_mode
-from modules.sleep import sleep_manager
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
@@ -93,32 +92,20 @@ def main():
             broadcast_discord_message("👀 Watchdog is now monitoring the server!", force=True)
             log("✓ Discord message sent")
         else:
-            log("⚠️ Watchdog starting without Discord integration")
-        
-        # Schedule maintenance and sleep checks
+            log("✗ Discord bot failed to start")
+            
+        # Schedule maintenance checks
         maintenance_manager.schedule_maintenance()
-        log("✓ Maintenance scheduled")
-        sleep_manager.schedule_sleep()
-        log("✓ Sleep checks scheduled")
         
-        # Start monitoring threads
-        log_monitor = Thread(target=monitor_minecraft_logs, daemon=True)
-        log_monitor.start()
-        
-        # Initial maintenance check - only set the flag, don't initiate maintenance
-        if is_maintenance_mode():
-            log("Watchdog started during maintenance mode")
-            server_manager.manual_stop = True
-        
-        # Main loop - handle scheduling and connection listening
+        # Main monitoring loop
         while True:
             try:
+                # Run scheduled tasks
                 schedule.run_pending()
                 
-                # Listen for connections if server is down and not in maintenance
-                if not server_manager.check_server() and not server_manager.manual_stop:
-                    if server_manager.listen_for_connection():
-                        server_manager.start_server()
+                # Check if server should be listening for connections
+                if not server_manager.check_server() and not is_maintenance_mode():
+                    server_manager.listen_for_connection()
                 
                 time.sleep(1)
                 

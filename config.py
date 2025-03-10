@@ -19,15 +19,12 @@ SERVER_PORT = int(os.getenv('SERVER_PORT'))
 WATCHDOG_LOG = os.getenv('WATCHDOG_LOG', '/workspace/watchdog/logs/watchdog.log')
 OP_LOG = os.getenv('OP_LOG', '/workspace/watchdog/logs/op.log')
 MC_LOG = os.getenv('MC_LOG', '/workspace/data/logs/latest.log')
-SLEEP_TRIGGER_DIR = os.getenv('SLEEP_TRIGGER_DIR')
-SLEEP_TRIGGER_FILE = os.getenv('SLEEP_TRIGGER_FILE')
 
 # Validate required settings
 required_settings = [
     ('DISCORD_TOKEN', DISCORD_TOKEN),
     ('DISCORD_WATCHDOG_CHANNEL', DISCORD_CHANNELS[0]),
-    ('DISCORD_CONSOLE_CHANNEL', CONSOLE_CHANNEL),
-    ('SLEEP_TRIGGER_DIR', SLEEP_TRIGGER_DIR)
+    ('DISCORD_CONSOLE_CHANNEL', CONSOLE_CHANNEL)
 ]
 
 for setting_name, setting_value in required_settings:
