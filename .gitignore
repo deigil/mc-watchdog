@@ -42,5 +42,4 @@ ENV/
 Thumbs.db
 
 # Temp
-maintenance_mode
 test*

@@ -31,25 +31,12 @@ class DiscordBot:
             log(f'Logged in as {self.client.user}')
             log(f'Bot is now visible as online in Discord')
             
-            # Import maintenance functions
-            from modules.maintenance import is_maintenance_mode
-            
-            # Check maintenance mode (this will also ensure correct state based on day)
-            in_maintenance = is_maintenance_mode()
-            
-            # Set appropriate status based on maintenance mode
-            if in_maintenance:
-                await self.client.change_presence(
-                    status=discord.Status.online,
-                    activity=discord.Activity(type=discord.ActivityType.playing, name="Architect Vault ⚙️")
-                )
-                log("Bot status set to maintenance mode")
-            else:
-                await self.client.change_presence(
-                    status=discord.Status.online, 
-                    activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
-                )
-                log("Bot status set to online with 'Watching a POG Vault!' activity")
+            # Set normal status
+            await self.client.change_presence(
+                status=discord.Status.online, 
+                activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+            )
+            log("Bot status set to online with 'Watching a POG Vault!' activity")
             
             self._ready = True  # Mark bot as ready
         
@@ -67,32 +54,50 @@ class DiscordBot:
 
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
-        try:
-            # Wait for bot to be ready before sending
-            if not self.is_ready():
-                log("Discord bot not ready, queuing message for retry")
-                time.sleep(2)  # Brief pause before retry
-                if not self.is_ready():  # Check again after pause
-                    log("Discord bot still not ready, message not sent")
-                    return False
-            
-            data = {'content': message}
-            response = requests.post(
-                f'https://discord.com/api/v10/channels/{channel_id}/messages',
-                headers=self.headers,
-                json=data
-            )
-            
-            if response.status_code == 200:
-                log(f"Discord message sent successfully to channel {channel_id}: {message}")
-                return True
-            else:
-                log(f"Failed to send Discord message to channel {channel_id}: {response.status_code}")
-                return False
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Wait for bot to be ready before sending
+                if not self.is_ready():
+                    log("Discord bot not ready, queuing message for retry")
+                    time.sleep(2)  # Brief pause before retry
+                    if not self.is_ready():  # Check again after pause
+                        log("Discord bot still not ready, message not sent")
+                        return False
                 
-        except Exception as e:
-            log(f"Error sending Discord message: {e}")
-            return False
+                data = {'content': message}
+                response = requests.post(
+                    f'https://discord.com/api/v10/channels/{channel_id}/messages',
+                    headers=self.headers,
+                    json=data,
+                    timeout=10  # Add timeout
+                )
+                
+                if response.status_code == 200:
+                    log(f"Discord message sent successfully to channel {channel_id}: {message}")
+                    return True
+                elif response.status_code == 429:  # Rate limited
+                    retry_after = response.json().get('retry_after', 5)
+                    log(f"Discord rate limited, waiting {retry_after} seconds")
+                    time.sleep(retry_after)
+                    retry_count += 1
+                else:
+                    log(f"Failed to send Discord message to channel {channel_id}: {response.status_code}")
+                    retry_count += 1
+                    time.sleep(2 * retry_count)  # Increasing delay between retries
+                    
+            except requests.exceptions.RequestException as e:
+                log(f"Network error sending Discord message: {e}")
+                retry_count += 1
+                time.sleep(2 * retry_count)  # Increasing delay between retries
+            except Exception as e:
+                log(f"Error sending Discord message: {e}")
+                return False
+        
+        log(f"Failed to send Discord message after {max_retries} retries")
+        return False
 
     def monitor_commands(self):
         """Monitor Discord console channel for commands"""
@@ -100,12 +105,17 @@ class DiscordBot:
             # Get initial last message ID by fetching most recent message
             response = requests.get(
                 f'https://discord.com/api/v10/channels/{self.console_channel}/messages?limit=1',
-                headers=self.headers
+                headers=self.headers,
+                timeout=10  # Add timeout
             )
             if response.status_code == 200 and response.json():
                 last_message_id = response.json()[0]['id']
             else:
                 last_message_id = None
+            
+            # Track consecutive errors
+            consecutive_errors = 0
+            max_consecutive_errors = 5
             
             while True:
                 try:
@@ -114,7 +124,7 @@ class DiscordBot:
                     if last_message_id:
                         url += f'?after={last_message_id}'
                     
-                    response = requests.get(url, headers=self.headers)
+                    response = requests.get(url, headers=self.headers, timeout=10)
                     
                     if response.status_code == 200:
                         messages = response.json()
@@ -125,34 +135,32 @@ class DiscordBot:
                             # Process messages (newest first)
                             for message in messages:
                                 content = message.get('content', '').strip().lower()
-                                if content == '/start':
+                                if content == '!start':
                                     log("Received start command from Discord")
                                     self.send_message(self.console_channel, "⚙️ Processing start command...")
-                                    
-                                    # Check if we're in maintenance mode
-                                    from modules.maintenance import is_maintenance_mode
-                                    if is_maintenance_mode():
-                                        self.send_message(self.console_channel, "⚠️ Starting server during maintenance mode")
                                     
                                     if not self.server_manager.check_server():
                                         # Get current container status
                                         container_status = self.server_manager.get_container_status()
+                                        
+                                        # Release port if we're listening for connections
+                                        if hasattr(self.server_manager, 'is_listening') and self.server_manager.is_listening:
+                                            log("Releasing port before starting server")
+                                            self.server_manager.stop_listening()
+                                            # Brief pause to ensure port is fully released
+                                            time.sleep(1)
                                         
                                         if self.server_manager.start_server():
                                             self.send_message(self.console_channel, "✅ Server started successfully!")
                                             
                                             # Reset manual_stop flag to ensure listening works
                                             self.server_manager.manual_stop = False
-                                            
-                                            # If in maintenance mode, add a note
-                                            if is_maintenance_mode():
-                                                self.send_message(self.console_channel, "⚠️ Note: Server started in maintenance mode")
                                         else:
                                             self.send_message(self.console_channel, "❌ Failed to start server!")
                                     else:
                                         self.send_message(self.console_channel, "ℹ️ Server is already running!")
                                     
-                                elif content == '/stop':
+                                elif content == '!stop':
                                     log("Received stop command from Discord")
                                     self.send_message(self.console_channel, "⚙️ Processing stop command...")
                                     
@@ -163,86 +171,49 @@ class DiscordBot:
                                             self.send_message(self.console_channel, "❌ Failed to stop server!")
                                     else:
                                         self.send_message(self.console_channel, "ℹ️ Server is already stopped!")
-                                    
-                                elif content == '/players':
-                                    log("Received players command from Discord")
-                                    self.send_message(self.console_channel, "⚙️ Checking for players via server logs...")
-                                    
-                                    # Check if server is running
-                                    if not self.server_manager.check_server():
-                                        self.send_message(self.console_channel, "ℹ️ Server is not running")
-                                        continue
-                                    
-                                    # Get player information
-                                    is_empty, online_players = self.server_manager.check_server_empty(return_players=True)
-                                    
-                                    if is_empty:
-                                        self.send_message(self.console_channel, "ℹ️ No players currently online")
-                                    else:
-                                        # Format the player list nicely
-                                        player_list = ", ".join(online_players)
-                                        player_count = len(online_players)
-                                        
-                                        # Create a nice message with emoji
-                                        if player_count == 1:
-                                            message = f"✅ **1 player online**: {player_list}"
-                                        else:
-                                            message = f"✅ **{player_count} players online**: {player_list}"
-                                        
-                                        self.send_message(self.console_channel, message)
                                 
-                                elif content == '/maintenance':
-                                    log("Received maintenance command from Discord")
-                                    self.send_message(self.console_channel, "⚙️ Checking maintenance status...")
-                                    
-                                    # Import maintenance functions
-                                    from modules.maintenance import is_maintenance_mode
+                                elif content == '!status':
+                                    log("Received status command from Discord")
+                                    self.send_message(self.console_channel, "⚙️ Checking server status...")
                                     
                                     # Check current day
                                     current_day = datetime.now().weekday()
                                     day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
                                     
-                                    # Check maintenance status
-                                    in_maintenance = is_maintenance_mode()
+                                    # Check server status
+                                    server_running = self.server_manager.check_server()
                                     
-                                    if in_maintenance:
-                                        # Determine when maintenance will end
-                                        if current_day == 1:  # Tuesday
-                                            end_day = "Wednesday"
-                                        elif current_day == 3:  # Thursday
-                                            end_day = "Friday"
-                                        else:
-                                            end_day = day_names[(current_day + 1) % 7]
-                                        
+                                    if server_running:
                                         self.send_message(
                                             self.console_channel, 
-                                            f"🔧 **MAINTENANCE MODE ACTIVE**\nToday is {day_names[current_day]}. Maintenance will end on {end_day} at 8:00 AM."
+                                            f"✅ **SERVER ONLINE**\nToday is {day_names[current_day]}. Server is running normally."
                                         )
                                     else:
-                                        # Determine when next maintenance will start
-                                        days_to_monday = (0 - current_day) % 7
-                                        days_to_wednesday = (2 - current_day) % 7
-                                        
-                                        if days_to_monday == 0:
-                                            next_maintenance = "tonight at 11:59 PM"
-                                        elif days_to_wednesday == 0:
-                                            next_maintenance = "tonight at 11:59 PM"
-                                        elif days_to_monday < days_to_wednesday:
-                                            next_maintenance = f"on Monday night (in {days_to_monday} days)"
-                                        else:
-                                            next_maintenance = f"on Wednesday night (in {days_to_wednesday} days)"
-                                        
                                         self.send_message(
                                             self.console_channel, 
-                                            f"✅ **NORMAL MODE**\nToday is {day_names[current_day]}. Next maintenance will begin {next_maintenance}."
+                                            f"❌ **SERVER OFFLINE**\nToday is {day_names[current_day]}. Server is not running."
                                         )
+                    
+                    # Reset consecutive error counter on success
+                    consecutive_errors = 0
                     
                     time.sleep(2)  # Wait 2 seconds between checks
                     
-                except Exception as e:
-                    log(f"Error monitoring Discord commands: {e}")
-                    self.send_message(self.console_channel, f"⚠️ Error processing command: {e}")
-                    time.sleep(5)  # Wait longer on error
+                except requests.exceptions.RequestException as e:
+                    consecutive_errors += 1
+                    error_msg = str(e)
+                    
+                    # Log the error but don't spam Discord with temporary network issues
+                    log(f"Discord API connection issue: {error_msg[:200]}...")
+                    
+                    # Only send error to Discord if it's persistent (not just a brief network hiccup)
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.send_message(self.console_channel, f"⚠️ Persistent Discord connection issues detected. Will continue retrying.")
+                        consecutive_errors = 0  # Reset after notifying
+                    
+                    # Exponential backoff for retries
+                    retry_delay = min(30, 2 ** consecutive_errors)
+                    time.sleep(retry_delay)
                     
         except Exception as e:
             log(f"Fatal error in Discord monitor: {e}")
@@ -285,29 +256,16 @@ def broadcast_discord_message(message, force=False):
     
     Args:
         message: The message to send
-        force: If True, send even during maintenance mode without prefix
+        force: If True, send even if bot is not ready
     """
     try:
-        # Check if we're in maintenance mode
-        from modules.maintenance import is_maintenance_mode
-        maintenance_mode = is_maintenance_mode()
-        
         # Wait briefly for bot to be ready if it's not
         if not discord_bot.is_ready():
             time.sleep(2)
         
-        if maintenance_mode and not force:
-            # During maintenance, add a prefix to the message
-            prefixed_message = f"[⚙️] {message}"
-            log(f"Sending maintenance-prefixed message: {prefixed_message}")
-            
-            # Send to all configured channels with the prefix
-            for channel in discord_bot.channels:
-                discord_bot.send_message(channel, prefixed_message)
-        else:
-            # Normal case or forced message - send to all channels without prefix
-            for channel in discord_bot.channels:
-                discord_bot.send_message(channel, message)
+        # Send to all configured channels
+        for channel in discord_bot.channels:
+            discord_bot.send_message(channel, message)
                 
     except Exception as e:
         log(f"Error in broadcast_discord_message: {e}")
