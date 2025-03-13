@@ -5,8 +5,9 @@ import threading
 from config import DISCORD_TOKEN, DISCORD_CHANNELS, CONSOLE_CHANNEL
 from modules.logging import log
 from modules.server import server_manager
+from modules import is_maintenance_period  # Import from modules package
 import discord
-from datetime import datetime
+from datetime import datetime  # This is for datetime objects
 
 class DiscordBot:
     def __init__(self):
@@ -54,6 +55,11 @@ class DiscordBot:
 
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
+        # Skip sending messages during maintenance period
+        if is_maintenance_period():
+            log(f"[MAINTENANCE MODE] Message not sent to Discord: {message}")
+            return False
+            
         max_retries = 3
         retry_count = 0
         
@@ -119,6 +125,12 @@ class DiscordBot:
             
             while True:
                 try:
+                    # Check Discord connection
+                    if not discord_bot.is_ready():
+                        log("Discord bot not connected, retrying in 30 seconds")
+                        time.sleep(30)
+                        continue
+                    
                     # Only fetch messages after our last seen message
                     url = f'https://discord.com/api/v10/channels/{self.console_channel}/messages'
                     if last_message_id:
@@ -137,7 +149,10 @@ class DiscordBot:
                                 content = message.get('content', '').strip().lower()
                                 if content == '!start':
                                     log("Received start command from Discord")
-                                    self.send_message(self.console_channel, "⚙️ Processing start command...")
+                                    
+                                    # Only respond if not in maintenance mode
+                                    if not is_maintenance_period():
+                                        self.send_message(self.console_channel, "⚙️ Processing start command...")
                                     
                                     if not self.server_manager.check_server():
                                         # Get current container status
@@ -159,22 +174,13 @@ class DiscordBot:
                                             self.send_message(self.console_channel, "❌ Failed to start server!")
                                     else:
                                         self.send_message(self.console_channel, "ℹ️ Server is already running!")
-                                    
-                                elif content == '!stop':
-                                    log("Received stop command from Discord")
-                                    self.send_message(self.console_channel, "⚙️ Processing stop command...")
-                                    
-                                    if self.server_manager.check_server():
-                                        if self.server_manager.stop_server():
-                                            self.send_message(self.console_channel, "✅ Server stopped successfully!")
-                                        else:
-                                            self.send_message(self.console_channel, "❌ Failed to stop server!")
-                                    else:
-                                        self.send_message(self.console_channel, "ℹ️ Server is already stopped!")
                                 
                                 elif content == '!status':
                                     log("Received status command from Discord")
-                                    self.send_message(self.console_channel, "⚙️ Checking server status...")
+                                    
+                                    # Only respond if not in maintenance mode
+                                    if not is_maintenance_period():
+                                        self.send_message(self.console_channel, "⚙️ Checking server status...")
                                     
                                     # Check current day
                                     current_day = datetime.now().weekday()
@@ -246,9 +252,12 @@ class DiscordBot:
 # Create singleton instance
 discord_bot = DiscordBot()
 
-# Export convenience functions
 def send_discord_message(channel_id, message):
-    discord_bot.send_message(channel_id, message)
+    # Skip sending messages during maintenance period
+    if is_maintenance_period():
+        log(f"[MAINTENANCE MODE] Message not sent to Discord: {message}")
+        return False
+    return discord_bot.send_message(channel_id, message)
 
 def broadcast_discord_message(message, force=False):
     """
@@ -256,9 +265,14 @@ def broadcast_discord_message(message, force=False):
     
     Args:
         message: The message to send
-        force: If True, send even if bot is not ready
+        force: If True, send even if bot is not ready or during maintenance
     """
     try:
+        # Check for maintenance period unless force=True
+        if not force and is_maintenance_period():
+            log(f"[MAINTENANCE MODE] Broadcast message not sent to Discord: {message}")
+            return False
+            
         # Wait briefly for bot to be ready if it's not
         if not discord_bot.is_ready():
             time.sleep(2)

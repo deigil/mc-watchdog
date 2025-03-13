@@ -1,10 +1,10 @@
 import socket
 import subprocess
-import time
+import time  # This is the time module for sleep()
 from modules.logging import log
 from config import SERVER_PORT, DOCKER_CONTAINER, MC_LOG
-from modules import message_tracker
-from datetime import datetime
+from modules import message_tracker, is_maintenance_period  # Import from modules package
+from datetime import datetime  # This is for datetime objects
 
 class ServerManager:
     def __init__(self):
@@ -150,8 +150,11 @@ class ServerManager:
                     # If we get here, the command succeeded
                     from modules.discord import broadcast_discord_message
                     
-                    # Always send startup message
-                    broadcast_discord_message("🚀 Server is starting up! Give it like 4 minutes to start...")
+                    # Always send startup message unless in maintenance mode
+                    if not is_maintenance_period():
+                        broadcast_discord_message("🚀 Server is starting up! Give it like 4 minutes to start...")
+                    else:
+                        log("[MAINTENANCE MODE] Suppressed server startup message to Discord")
                     
                     log("Starting Minecraft server...")
                     
@@ -269,7 +272,13 @@ class ServerManager:
         if not hasattr(self, '_listening_active') or not self._listening_active:
             log("Starting new listening period")
             from modules.discord import broadcast_discord_message
-            broadcast_discord_message("💤 Next connection attempt will wake up server!")
+            
+            # Only send message if not in maintenance mode
+            if not is_maintenance_period():
+                broadcast_discord_message("💤 Next connection attempt will wake up server!")
+            else:
+                log("[MAINTENANCE MODE] Suppressed connection listening message to Discord")
+                
             self._listening_active = True
         
         sock = None
