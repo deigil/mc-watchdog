@@ -5,16 +5,18 @@ import time
 import os
 import schedule
 from threading import Thread
-from config import MC_LOG, CONSOLE_CHANNEL
+from config import MC_LOG, COMMAND_CHANNEL, DISCORD_TOKEN
+import socket
 
 from modules.logging import log
-from modules.discord import discord_bot, broadcast_discord_message, start_discord_bot, start_discord_monitor
+from modules.discord import discord_bot, start_discord_bot, start_discord_monitor
 from modules.server import server_manager
+from modules.utils import broadcast_message
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     log(f"Received signal {signum}, shutting down gracefully...")
-    broadcast_discord_message("⚠️ Watchdog is shutting down...")
+    broadcast_message("⚠️ Watchdog is shutting down...")
     sys.exit(0)
 
 def monitor_minecraft_logs():
@@ -33,6 +35,11 @@ def monitor_minecraft_logs():
 
 def start_discord():
     """Start Discord bot and command monitoring in separate threads"""
+    # First check if token is valid
+    if not DISCORD_TOKEN or DISCORD_TOKEN == '' or DISCORD_TOKEN == 'your_discord_token_here':
+        log("⚠️ Invalid Discord token. Please set DISCORD_TOKEN in environment variables.")
+        return False
+    
     retry_count = 0
     max_retries = 5
     
@@ -73,6 +80,9 @@ def start_discord():
             else:
                 log(f"Failed to start Discord after {max_retries} attempts. Continuing without Discord.")
                 return False
+    
+    log("⚠️ Could not connect to Discord after multiple attempts. Check your token and network connection.")
+    return False
 
 def main():
     try:
@@ -86,25 +96,48 @@ def main():
         discord_started = start_discord()
         if discord_started:
             log("✓ Discord bot started")
+            
             # Send startup message only after we know Discord is ready
-            broadcast_discord_message("👀 Watchdog is now monitoring the server!", force=True)
+            broadcast_message("👀 Watchdog is now monitoring the server!", force=True)
             log("✓ Discord message sent")
         else:
             log("✗ Discord bot failed to start")
         
+        # Set up a periodic check for server status to avoid constant port cycling
+        last_server_check = 0
+        server_check_interval = 30  # Check server status every 30 seconds
+        
         # Main monitoring loop
         while True:
             try:
+                current_time = time.time()
+                
                 # Run scheduled tasks
                 schedule.run_pending()
                 
+                # Periodically check server status instead of every loop
+                if current_time - last_server_check >= server_check_interval:
+                    server_running = server_manager.check_server()
+                    last_server_check = current_time
+                    
+                    # Log server status periodically (once per hour) to confirm monitoring is working
+                    if not hasattr(server_manager, '_last_status_log') or current_time - server_manager._last_status_log >= 3600:
+                        if server_running:
+                            log("Server status check: Server is running")
+                        else:
+                            log("Server status check: Server is not running")
+                        server_manager._last_status_log = current_time
+                
                 # Check if server should be listening for connections
                 # Only listen if server is not running AND not currently starting up
-                if not server_manager.check_server() and not server_manager.is_starting:
+                if not server_running and not server_manager.is_starting:
                     # If listen_for_connection returns True, it means a connection was detected
                     if server_manager.listen_for_connection():
                         log("Connection detected, starting server...")
                         server_manager.start_server()
+                
+                # Note: Removed redundant port check here since we already check the port status
+                # when checking if the server is running and when starting to listen for connections
                 
                 time.sleep(1)
                 
@@ -115,7 +148,7 @@ def main():
             
     except Exception as e:
         log(f"Fatal error in main loop: {e}")
-        broadcast_discord_message("⚠️ Watchdog encountered a fatal error and needs to be restarted")
+        broadcast_message("⚠️ Watchdog encountered a fatal error and needs to be restarted")
         raise
 
 if __name__ == "__main__":

@@ -5,11 +5,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Discord configuration
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN', '')  # Get token from environment variable
+COMMAND_CHANNEL = os.getenv('DISCORD_COMMAND_CHANNEL', '')  # Channel for server control commands
 DISCORD_CHANNELS = [
-    os.getenv('DISCORD_WATCHDOG_CHANNEL')
+    os.getenv('DISCORD_CHANNELS', '')
 ]
-CONSOLE_CHANNEL = os.getenv('DISCORD_CONSOLE_CHANNEL')
 
 # Server configuration
 DOCKER_CONTAINER = os.getenv('DOCKER_CONTAINER', 'wvh')
@@ -24,7 +24,7 @@ MC_LOG = os.getenv('MC_LOG', '/workspace/data/logs/latest.log')
 required_settings = [
     ('DISCORD_TOKEN', DISCORD_TOKEN),
     ('DISCORD_WATCHDOG_CHANNEL', DISCORD_CHANNELS[0]),
-    ('DISCORD_CONSOLE_CHANNEL', CONSOLE_CHANNEL)
+    ('DISCORD_COMMAND_CHANNEL', COMMAND_CHANNEL)
 ]
 
 for setting_name, setting_value in required_settings:
