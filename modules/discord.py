@@ -5,12 +5,10 @@ import threading
 from config import DISCORD_TOKEN, DISCORD_CHANNELS, COMMAND_CHANNEL
 from modules.logging import log
 from modules.server import server_manager
-from modules import is_maintenance_period  # Import from modules package
 import discord
-from datetime import datetime  # This is for datetime objects
+from datetime import datetime
 import socket
 from discord.ext import commands
-from modules.utils import set_broadcast_function
 
 class DiscordBot:
     def __init__(self):
@@ -22,8 +20,8 @@ class DiscordBot:
             'Content-Type': 'application/json'
         }
         self.server_manager = server_manager
-        self._ready = False  # Track ready state
-        self._failed_channels = {}  # Initialize empty failed channels cache
+        self._ready = False
+        self._failed_channels = {}
         
         # Setup Discord client
         intents = discord.Intents.default()
@@ -47,15 +45,11 @@ class DiscordBot:
             self._failed_channels = {}
             log(f"Using Discord channels: Command={self.command_channel}, Broadcast={self.channels}")
             
-            # Register broadcast function now that we're ready
-            set_broadcast_function(broadcast_discord_message)
-            
-            self._ready = True  # Mark bot as ready
+            self._ready = True
         
         # Setup hook for initialization
         async def setup_hook():
             log("Bot setup hook called")
-            # Any additional setup can go here
         
         # Assign the setup hook
         self.client.setup_hook = setup_hook
@@ -66,11 +60,6 @@ class DiscordBot:
 
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
-        # Skip sending messages during maintenance period
-        if is_maintenance_period():
-            log(f"[MAINTENANCE MODE] Message not sent to Discord: {message}")
-            return False
-        
         # Check if this channel has been failing consistently
         if hasattr(self, '_failed_channels') and channel_id in self._failed_channels:
             last_failure, count = self._failed_channels[channel_id]
@@ -144,22 +133,32 @@ class DiscordBot:
         return False
 
     def monitor_commands(self):
-        """Monitor Discord command channel for commands"""
+        """Monitor Discord channels for commands"""
         try:
-            # Get initial last message ID by fetching most recent message
+            # Get initial last message IDs for both channels
+            last_message_ids = {}
+            
+            # Command channel
             response = requests.get(
                 f'https://discord.com/api/v10/channels/{self.command_channel}/messages?limit=1',
                 headers=self.headers,
-                timeout=10  # Add timeout
+                timeout=10
             )
             if response.status_code == 200 and response.json():
-                last_message_id = response.json()[0]['id']
-            else:
-                last_message_id = None
+                last_message_ids[self.command_channel] = response.json()[0]['id']
+            
+            # Broadcast channel
+            response = requests.get(
+                f'https://discord.com/api/v10/channels/1342194255397130381/messages?limit=1',
+                headers=self.headers,
+                timeout=10
+            )
+            if response.status_code == 200 and response.json():
+                last_message_ids['1342194255397130381'] = response.json()[0]['id']
             
             # Track consecutive errors
             consecutive_errors = 0
-            max_consecutive_errors = 5
+            max_consecutive_errors = 2
             
             while True:
                 try:
@@ -169,67 +168,43 @@ class DiscordBot:
                         time.sleep(30)
                         continue
                     
-                    # Only fetch messages after our last seen message
-                    url = f'https://discord.com/api/v10/channels/{self.command_channel}/messages'
-                    if last_message_id:
-                        url += f'?after={last_message_id}'
-                    
-                    response = requests.get(url, headers=self.headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        messages = response.json()
-                        if messages:
-                            # Update last_message_id to the most recent message
-                            last_message_id = messages[0]['id']
-                            
-                            # Process messages (newest first)
-                            for message in messages:
-                                content = message.get('content', '').strip().lower()
-                                if content == 'start':
-                                    log("Received start command from Discord")
+                    # Monitor both channels
+                    for channel_id in [self.command_channel, '1342194255397130381']:
+                        # Only fetch messages after our last seen message
+                        url = f'https://discord.com/api/v10/channels/{channel_id}/messages'
+                        if channel_id in last_message_ids:
+                            url += f'?after={last_message_ids[channel_id]}'
+                        
+                        response = requests.get(url, headers=self.headers, timeout=10)
+                        
+                        if response.status_code == 200:
+                            messages = response.json()
+                            if messages:
+                                # Update last_message_id for this channel
+                                last_message_ids[channel_id] = messages[0]['id']
+                                
+                                # Process messages (newest first)
+                                for message in messages:
+                                    content = message.get('content', '').strip()
+                                    msg_channel_id = message.get('channel_id')
                                     
-                                    # Only respond if not in maintenance mode
-                                    if not is_maintenance_period():
-                                        self.send_message(self.command_channel, "⚙️ Processing start command...")
-                                    
-                                    # Check if server is already running
-                                    if self.server_manager.check_server():
-                                        self.send_message(self.command_channel, "ℹ️ Server is already running!")
-                                        continue
-                                    
-                                    # Make sure we're not already in the process of starting
-                                    if self.server_manager.is_starting:
-                                        self.send_message(self.command_channel, "⏳ Server is already in the process of starting...")
-                                        continue
-                                    
-                                    # 1. Stop any active listening and release the port
-                                    log("Stopping any active listening and releasing port")
-                                    self.server_manager.stop_listening()
-                                    
-                                    # 2. Start the server using the existing function
-                                    if self.server_manager.start_server():
-                                        # 3. Confirm with docker ps
-                                        try:
-                                            import subprocess
-                                            result = subprocess.run(
-                                                "docker ps --filter name=wvh --format '{{.Names}} {{.Status}}'",
-                                                shell=True, 
-                                                capture_output=True, 
-                                                text=True
-                                            )
-                                            if result.stdout.strip():
-                                                # 4. Send confirmation to the command channel
-                                                self.send_message(self.command_channel, f"✅ Server started successfully! Status: {result.stdout.strip()}")
-                                            else:
-                                                self.send_message(self.command_channel, "⚠️ Server start command succeeded but container not found in docker ps")
-                                        except Exception as e:
-                                            log(f"Error checking docker ps: {e}")
-                                            self.send_message(self.command_channel, "✅ Server start command succeeded")
+                                    # Handle !start command in broadcast channel
+                                    if msg_channel_id == '1342194255397130381' and content.lower() == '!start':
+                                        log("Received start command from Discord broadcast channel")
                                         
-                                        # Reset manual_stop flag to ensure listening works
-                                        self.server_manager.manual_stop = False
-                                    else:
-                                        self.send_message(self.command_channel, "❌ Failed to start server!")
+                                        # Start the server and send the response message
+                                        success, message = self.server_manager.start_server()
+                                        self.send_message(msg_channel_id, message)
+                                        continue
+                                    
+                                    # Handle original start command in command channel
+                                    elif msg_channel_id == self.command_channel and content.lower() == 'start':
+                                        log("Received start command from Discord command channel")
+                                        
+                                        # Start the server and send the response message
+                                        success, message = self.server_manager.start_server()
+                                        self.send_message(self.command_channel, message)
+                                        continue
                     
                     # Reset consecutive error counter on success
                     consecutive_errors = 0
@@ -300,13 +275,9 @@ class DiscordBot:
 discord_bot = DiscordBot()
 
 def send_discord_message(channel_id, message):
-    # Skip sending messages during maintenance period
-    if is_maintenance_period():
-        log(f"[MAINTENANCE MODE] Message not sent to Discord: {message}")
-        return False
     return discord_bot.send_message(channel_id, message)
 
-def broadcast_discord_message(message, force=False):
+def broadcast_discord_message(message):
     """Send a message to all broadcast channels"""
     if not discord_bot.is_ready():
         log(f"Discord bot not ready, message not sent: {message}")
@@ -359,7 +330,6 @@ def start_discord_monitor():
             
     except Exception as e:
         log(f"Fatal error in Discord monitor: {e}")
-        # Don't try to send Discord message here as it might be the source of the error
 
 def start_discord_bot():
     """Start the Discord bot"""
