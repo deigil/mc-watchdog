@@ -124,18 +124,10 @@ def main():
                 # Run scheduled tasks
                 schedule.run_pending()
                 
-                # Periodically check server status
+                # Periodically check server status (without logging)
                 if current_time - last_server_check >= server_check_interval:
-                    server_running = server_manager.check_server()
+                    server_manager.check_server()
                     last_server_check = current_time
-                    
-                    # Log server status periodically (once per hour)
-                    if not hasattr(server_manager, '_last_status_log') or current_time - server_manager._last_status_log >= 3600:
-                        if server_running:
-                            log("Server status check: Server is running")
-                        else:
-                            log("Server status check: Server is not running")
-                        server_manager._last_status_log = current_time
                 
                 time.sleep(1)
                 

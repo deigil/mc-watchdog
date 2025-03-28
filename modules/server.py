@@ -57,28 +57,20 @@ class ServerManager:
             return False
 
     def check_server(self):
-        """Check if the Minecraft server is running and accepting connections"""
+        """Check if the Minecraft server is running based on container health"""
         try:
-            # First check if container is running and healthy
-            if not self.check_container_health():
-                if self.last_server_state:  # If server was up before
-                    log(f"Server stopped unexpectedly. Container is not healthy.")
-                    self.last_server_state = False
-                return False
-
-            # Then try to connect to the port
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(3)
-                try:
-                    # Try to connect to the port
-                    sock.connect(("localhost", self.port))
-                    # If we can connect, server is up
-                    self.last_server_state = True
-                    return True
-                except (socket.error, ConnectionRefusedError):
-                    # Can't connect, server is not ready
-                    self.last_server_state = False
-                    return False
+            # Only check container health status
+            container_healthy = self.check_container_health()
+            
+            # Update server state and log only on state changes
+            if container_healthy != self.last_server_state:
+                if container_healthy:
+                    log("Server is now running (container healthy)")
+                else:
+                    log("Server is now stopped (container unhealthy)")
+                self.last_server_state = container_healthy
+                
+            return container_healthy
                 
         except Exception as e:
             log(f"Error checking server: {e}")
