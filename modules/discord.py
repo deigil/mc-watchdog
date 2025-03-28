@@ -11,8 +11,6 @@ import socket
 from discord.ext import commands
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import dns.resolver
-import dns.exception
 
 class DiscordBot:
     def __init__(self):
@@ -26,26 +24,16 @@ class DiscordBot:
         self._ready = False
         self._failed_channels = {}
         
-        # Setup Discord client
+        # Setup Discord client with message content intent
         intents = discord.Intents.default()
-        intents.message_content = True  # Enable seeing message content
+        intents.message_content = True
         self.client = discord.Client(intents=intents)
         
-        # Setup session with retry strategy
+        # Setup session with retry strategy - simplified
         self.session = requests.Session()
-        retries = Retry(
-            total=5,
-            backoff_factor=1,
-            status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["GET", "POST"]
-        )
-        self.session.mount('https://', HTTPAdapter(max_retries=retries))
         
-        # Setup simple DNS resolver with caching
-        self.resolver = dns.resolver.Resolver()
-        self.resolver.cache = dns.resolver.Cache()  # Simpler cache implementation
-        self.discord_ip = None
-        self._cache_discord_ip()
+        # Instead of using DNS resolver, just use a simple cache
+        self.discord_ips = {}
         
         # Register event handlers
         @self.client.event
@@ -77,14 +65,37 @@ class DiscordBot:
         return self._ready and self.client and self.client.is_ready()
 
     def _cache_discord_ip(self):
-        """Cache Discord's IP address"""
+        """Simple DNS caching without external libraries"""
         try:
-            answers = self.resolver.resolve('discord.com', 'A')
-            self.discord_ip = answers[0].to_text()
-            log(f"Successfully cached Discord IP: {self.discord_ip}")
-        except dns.exception.DNSException as e:
-            log(f"DNS resolution failed for discord.com: {e}")
-            self.discord_ip = None
+            addr_info = socket.getaddrinfo('discord.com', 443, socket.AF_INET)
+            if addr_info:
+                ip = addr_info[0][4][0]
+                self.discord_ips['discord.com'] = ip
+                log(f"Cached Discord IP: {ip}")
+            else:
+                log("Failed to resolve discord.com")
+        except Exception as e:
+            log(f"Error caching Discord IP: {e}")
+
+    def _create_session(self):
+        """Create a new robust session with proper retry handling"""
+        self.session = requests.Session()
+        
+        # Configure robust retries
+        retries = Retry(
+            total=10,
+            backoff_factor=1.5,
+            status_forcelist=[500, 502, 503, 504, 429],
+            allowed_methods=["GET", "POST"],
+        )
+        
+        # Use a longer timeout
+        adapter = HTTPAdapter(max_retries=retries, pool_connections=5, pool_maxsize=10)
+        self.session.mount('https://', adapter)
+        self.session.mount('http://', adapter)
+        
+        # Set a default timeout
+        self.session.timeout = 20
 
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
@@ -158,6 +169,8 @@ class DiscordBot:
         max_retry_delay = 300  # 5 minutes
         retry_count = 0
         last_message_id = None
+        last_connection_check = time.time()
+        connection_check_interval = 300  # Check connection every 5 minutes
         
         while True:
             try:
@@ -219,6 +232,14 @@ class DiscordBot:
                 # Wait before checking again
                 time.sleep(2)  # Check every 2 seconds for new commands
                 
+                # Check connection
+                current_time = time.time()
+                if current_time - last_connection_check > connection_check_interval:
+                    if not self._validate_connection():
+                        self._cache_discord_ip()  # Refresh DNS cache
+                        self._create_session()    # Recreate session
+                    last_connection_check = current_time
+                
             except Exception as e:
                 log(f"Error in command monitor: {str(e)[:100]}")
                 retry_count += 1
@@ -265,6 +286,24 @@ class DiscordBot:
             log(f"Error in bot thread: {e}")
         finally:
             log("Bot thread exiting")
+
+    def _validate_connection(self):
+        """Test connection to Discord API before starting monitor"""
+        try:
+            response = self.session.get(
+                'https://discord.com/api/v10/gateway',
+                headers=self.headers,
+                timeout=15
+            )
+            if response.status_code == 200:
+                log("Successfully validated Discord API connection")
+                return True
+            else:
+                log(f"Discord API returned status {response.status_code}")
+                return False
+        except Exception as e:
+            log(f"Discord API connection validation failed: {e}")
+            return False
 
 # Create singleton instance
 discord_bot = DiscordBot()
