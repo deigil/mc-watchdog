@@ -5,7 +5,7 @@ import time
 import os
 import schedule
 from threading import Thread
-from config import MC_LOG, COMMAND_CHANNEL, DISCORD_TOKEN
+from config import MC_LOG, CHAT, DISCORD_TOKEN
 import socket
 
 from modules.logging import log
@@ -16,13 +16,10 @@ def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     log(f"Received signal {signum}, shutting down gracefully...")
     
-    # Only try to send message if Discord bot is ready
     if discord_bot.is_ready():
         try:
-            # Send to all broadcast channels directly
-            for channel_id in discord_bot.channels:
-                discord_bot.send_message(channel_id, "⚠️ Watchdog is shutting down...")
-            time.sleep(1)  # Brief pause to allow message to send
+            discord_bot.send_message(discord_bot.channel, "⚠️ Watchdog is shutting down...")
+            time.sleep(1)
         except Exception as e:
             log(f"Error sending shutdown message: {e}")
     

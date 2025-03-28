@@ -2,7 +2,7 @@ import requests
 import time
 import asyncio
 import threading
-from config import DISCORD_TOKEN, DISCORD_CHANNELS, COMMAND_CHANNEL
+from config import DISCORD_TOKEN, CHAT  # Only need these two
 from modules.logging import log
 from modules.server import server_manager
 import discord
@@ -17,8 +17,7 @@ import dns.exception
 class DiscordBot:
     def __init__(self):
         self.token = DISCORD_TOKEN
-        self.channels = DISCORD_CHANNELS
-        self.command_channel = COMMAND_CHANNEL
+        self.channel = CHAT  # Single channel for all communications
         self.headers = {
             'Authorization': f'Bot {self.token}',
             'Content-Type': 'application/json'
@@ -29,6 +28,7 @@ class DiscordBot:
         
         # Setup Discord client
         intents = discord.Intents.default()
+        intents.message_content = True  # Enable seeing message content
         self.client = discord.Client(intents=intents)
         
         # Setup session with retry strategy
@@ -54,16 +54,14 @@ class DiscordBot:
             log(f'Logged in as {self.client.user}')
             log(f'Bot is now visible as online in Discord')
             
-            # Set normal status
             await self.client.change_presence(
                 status=discord.Status.online, 
                 activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
             )
             log("Bot status set to online with 'Watching a POG Vault!' activity")
             
-            # Reset failed channels cache on startup
             self._failed_channels = {}
-            log(f"Using Discord channels: Command={self.command_channel}, Broadcast={self.channels}")
+            log(f"Using Discord channel: {self.channel}")
             
             self._ready = True
         
@@ -155,97 +153,77 @@ class DiscordBot:
         return False
 
     def monitor_commands(self):
-        """Monitor Discord channels for commands"""
+        """Monitor Discord channel for commands"""
         base_retry_delay = 5
         max_retry_delay = 300  # 5 minutes
         retry_count = 0
+        last_message_id = None
         
         while True:
             try:
-                # Add DNS error handling
-                try:
-                    socket.getaddrinfo('discord.com', 443)
-                except socket.gaierror:
-                    log("DNS resolution failed for discord.com, waiting before retry...")
-                    time.sleep(min(max_retry_delay, base_retry_delay * (2 ** retry_count)))
-                    retry_count += 1
-                    continue
-                    
-                # Reset retry count on successful connection
-                retry_count = 0
-                
                 # Check Discord connection
                 if not self.is_ready():
                     log("Discord bot not connected, retrying in 30 seconds")
                     time.sleep(30)
                     continue
                 
-                # Get initial last message IDs for both channels
-                last_message_ids = {}
+                # Initialize last_message_id if not set
+                if last_message_id is None:
+                    response = self.session.get(
+                        f'https://discord.com/api/v10/channels/{self.channel}/messages?limit=1',
+                        headers=self.headers,
+                        timeout=10
+                    )
+                    if response.status_code == 200 and response.json():
+                        last_message_id = response.json()[0]['id']
+                        log(f"Initialized last message ID: {last_message_id}")
+                    else:
+                        log(f"Failed to initialize last message ID: {response.status_code}")
+                        time.sleep(5)
+                        continue
                 
-                # Command channel
-                response = self.session.get(
-                    f'https://discord.com/api/v10/channels/{self.command_channel}/messages?limit=1',
-                    headers=self.headers,
-                    timeout=10
-                )
-                if response.status_code == 200 and response.json():
-                    last_message_ids[self.command_channel] = response.json()[0]['id']
+                # Fetch new messages
+                url = f'https://discord.com/api/v10/channels/{self.channel}/messages'
+                if last_message_id:
+                    url += f'?after={last_message_id}'
                 
-                # Broadcast channel
-                response = self.session.get(
-                    f'https://discord.com/api/v10/channels/1342194255397130381/messages?limit=1',
-                    headers=self.headers,
-                    timeout=10
-                )
-                if response.status_code == 200 and response.json():
-                    last_message_ids['1342194255397130381'] = response.json()[0]['id']
+                response = self.session.get(url, headers=self.headers, timeout=10)
                 
-                # Monitor both channels
-                for channel_id in [self.command_channel, '1342194255397130381']:
-                    # Only fetch messages after our last seen message
-                    url = f'https://discord.com/api/v10/channels/{channel_id}/messages'
-                    if channel_id in last_message_ids:
-                        url += f'?after={last_message_ids[channel_id]}'
-                    
-                    response = self.session.get(url, headers=self.headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        messages = response.json()
-                        if messages:
-                            # Update last_message_id for this channel
-                            last_message_ids[channel_id] = messages[0]['id']
+                if response.status_code == 200:
+                    messages = response.json()
+                    if messages:
+                        # Update last_message_id (messages are newest first)
+                        last_message_id = messages[0]['id']
+                        log(f"Found {len(messages)} new messages, newest ID: {last_message_id}")
+                        
+                        # Process messages (oldest first to maintain order)
+                        for message in reversed(messages):
+                            content = message.get('content', '').strip().lower()
+                            author = message.get('author', {}).get('username', 'Unknown')
                             
-                            # Process messages (newest first)
-                            for message in messages:
-                                content = message.get('content', '').strip()
-                                msg_channel_id = message.get('channel_id')
+                            log(f"Processing message: '{content}' from {author}")
+                            
+                            # Handle !start command
+                            if content == '!start':
+                                log(f"Received !start command from {author}")
                                 
-                                # Handle !start command in broadcast channel
-                                if msg_channel_id == '1342194255397130381' and content.lower() == '!start':
-                                    log("Received start command from Discord broadcast channel")
-                                    
-                                    # Start the server and send the response message
-                                    success, message = self.server_manager.start_server()
-                                    self.send_message(msg_channel_id, message)
-                                    continue
-                                
-                                # Handle original start command in command channel
-                                elif msg_channel_id == self.command_channel and content.lower() == 'start':
-                                    log("Received start command from Discord command channel")
-                                    
-                                    # Start the server and send the response message
-                                    success, message = self.server_manager.start_server()
-                                    self.send_message(self.command_channel, message)
-                                    continue
+                                # Check if server is already running
+                                if self.server_manager.check_server():
+                                    log("Server is already running, sending response")
+                                    self.send_message(self.channel, "ℹ️ Server is already running!")
+                                else:
+                                    log("Starting server...")
+                                    success, response_msg = self.server_manager.start_server()
+                                    self.send_message(self.channel, response_msg)
                 
-                time.sleep(2)  # Wait 2 seconds between checks
+                # Wait before checking again
+                time.sleep(2)  # Check every 2 seconds for new commands
                 
-            except requests.exceptions.RequestException as e:
-                retry_delay = min(max_retry_delay, base_retry_delay * (2 ** retry_count))
-                log(f"Discord API connection issue (waiting {retry_delay}s): {str(e)[:100]}...")
-                time.sleep(retry_delay)
+            except Exception as e:
+                log(f"Error in command monitor: {str(e)[:100]}")
                 retry_count += 1
+                retry_delay = min(max_retry_delay, base_retry_delay * (2 ** retry_count))
+                time.sleep(retry_delay)
 
     def run(self):
         """Start the Discord bot"""
@@ -295,32 +273,22 @@ def send_discord_message(channel_id, message):
     return discord_bot.send_message(channel_id, message)
 
 def broadcast_discord_message(message):
-    """Send a message to all broadcast channels"""
+    """Send a message to the Discord channel"""
     if not discord_bot.is_ready():
         log(f"Discord bot not ready, message not sent: {message}")
         return False
         
     try:
-        success = False
-        # Send to all broadcast channels
-        for channel_id in discord_bot.channels:
-            try:
-                # Get the channel using the client
-                channel = discord_bot.client.get_channel(int(channel_id))
-                if channel:
-                    # Create task to send message
-                    asyncio.run_coroutine_threadsafe(
-                        channel.send(message),
-                        discord_bot.client.loop
-                    )
-                    success = True
-                else:
-                    log(f"Could not find broadcast channel {channel_id}")
-            except Exception as e:
-                log(f"Error sending to channel {channel_id}: {e}")
-                continue
-                
-        return success
+        channel = discord_bot.client.get_channel(int(discord_bot.channel))
+        if channel:
+            asyncio.run_coroutine_threadsafe(
+                channel.send(message),
+                discord_bot.client.loop
+            )
+            return True
+        else:
+            log(f"Could not find Discord channel {discord_bot.channel}")
+            return False
     except Exception as e:
         log(f"Error broadcasting message: {e}")
         return False
