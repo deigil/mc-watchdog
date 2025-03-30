@@ -99,68 +99,39 @@ class DiscordBot:
 
     def send_message(self, channel_id, message):
         """Send a message to a specific Discord channel"""
-        # Increase timeout and add exponential backoff
-        max_retries = 5  # Increased from 3
-        base_timeout = 15  # Increased from 10
-        
+        max_retries = 5
         retry_count = 0
+        
         while retry_count < max_retries:
             try:
-                # Try to resolve DNS if we don't have it cached
-                if not self.discord_ip:
-                    self._cache_discord_ip()
-                
+                # Don't use discord_ip, just make the request directly
                 response = self.session.post(
                     f'https://discord.com/api/v10/channels/{channel_id}/messages',
                     headers=self.headers,
                     json={'content': message},
-                    timeout=15  # Increased timeout
+                    timeout=15
                 )
                 
                 if response.status_code == 200:
                     log(f"Discord message sent successfully to channel {channel_id}: {message}")
-                    # Reset failure count for this channel if it exists
-                    if hasattr(self, '_failed_channels') and channel_id in self._failed_channels:
-                        del self._failed_channels[channel_id]
                     return True
-                elif response.status_code == 404:
-                    # Channel not found - likely deleted or bot doesn't have access
-                    log(f"Discord channel {channel_id} not found (404)")
-                    
-                    # Track failed channels to avoid repeated attempts
-                    if not hasattr(self, '_failed_channels'):
-                        self._failed_channels = {}
-                    
-                    if channel_id in self._failed_channels:
-                        _, count = self._failed_channels[channel_id]
-                        self._failed_channels[channel_id] = (time.time(), count + 1)
-                    else:
-                        self._failed_channels[channel_id] = (time.time(), 1)
-                    
-                    # Don't retry for 404 errors
-                    return False
                 elif response.status_code == 429:  # Rate limited
                     retry_after = response.json().get('retry_after', 5)
                     log(f"Discord rate limited, waiting {retry_after} seconds")
                     time.sleep(retry_after)
-                    retry_count += 1
                 else:
-                    log(f"Failed to send Discord message to channel {channel_id}: {response.status_code}")
-                    retry_count += 1
-                    time.sleep(2 * retry_count)  # Increasing delay between retries
+                    log(f"Failed to send Discord message: {response.status_code}")
+                    time.sleep(2 * (retry_count + 1))
                     
-            except requests.exceptions.ConnectionError as e:
-                if "Name or service not known" in str(e):
-                    # DNS resolution failed, try to refresh cache
-                    self._cache_discord_ip()
                 retry_count += 1
-                time.sleep(min(30, 2 ** retry_count))
+                
             except Exception as e:
                 log(f"Error sending Discord message: {e}")
                 retry_count += 1
-                time.sleep(min(30, 2 ** retry_count))
+                time.sleep(5)
         
-        log(f"Failed to send Discord message after {max_retries} retries")
+        if retry_count >= max_retries:
+            log(f"Failed to send Discord message after {max_retries} retries")
         return False
 
     def monitor_commands(self):
