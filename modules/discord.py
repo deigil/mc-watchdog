@@ -32,8 +32,14 @@ class DiscordBot:
         # Setup session with retry strategy - simplified
         self.session = requests.Session()
         
+        # Create a robust session
+        self._create_session()
+        
         # Instead of using DNS resolver, just use a simple cache
         self.discord_ips = {}
+        
+        # Initialize validation status
+        self.api_validated = False
         
         # Register event handlers
         @self.client.event
@@ -140,8 +146,14 @@ class DiscordBot:
         max_retry_delay = 300  # 5 minutes
         retry_count = 0
         last_message_id = None
-        last_connection_check = time.time()
-        connection_check_interval = 300  # Check connection every 5 minutes
+        
+        # Do validation once at startup
+        if not self.api_validated:
+            self.api_validated = self._validate_connection()
+            if self.api_validated:
+                log("✓ Discord API validated at startup")
+            else:
+                log("⚠️ Discord API validation failed at startup, but continuing anyway")
         
         while True:
             try:
@@ -202,14 +214,6 @@ class DiscordBot:
                 
                 # Wait before checking again
                 time.sleep(2)  # Check every 2 seconds for new commands
-                
-                # Check connection
-                current_time = time.time()
-                if current_time - last_connection_check > connection_check_interval:
-                    if not self._validate_connection():
-                        self._cache_discord_ip()  # Refresh DNS cache
-                        self._create_session()    # Recreate session
-                    last_connection_check = current_time
                 
             except Exception as e:
                 log(f"Error in command monitor: {str(e)[:100]}")
