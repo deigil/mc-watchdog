@@ -148,12 +148,15 @@ class DiscordBot:
         last_message_id = None
         
         # Do validation once at startup
-        if not self.api_validated:
+        if not hasattr(self, 'api_validated') or not self.api_validated:
             self.api_validated = self._validate_connection()
             if self.api_validated:
                 log("✓ Discord API validated at startup")
             else:
                 log("⚠️ Discord API validation failed at startup, but continuing anyway")
+        
+        # Define supported commands
+        supported_commands = ['!start']
         
         while True:
             try:
@@ -188,29 +191,35 @@ class DiscordBot:
                 if response.status_code == 200:
                     messages = response.json()
                     if messages:
-                        # Update last_message_id (messages are newest first)
-                        last_message_id = messages[0]['id']
-                        log(f"Found {len(messages)} new messages, newest ID: {last_message_id}")
+                        # Only log when messages are found, not their content
+                        message_count = len(messages)
+                        if message_count > 0:
+                            # Update last_message_id (messages are newest first)
+                            last_message_id = messages[0]['id']
+                            
+                            # Only log command messages
+                            command_messages = [m for m in messages if m.get('content', '').strip().lower() in supported_commands]
+                            if command_messages:
+                                log(f"Found {len(command_messages)} command messages out of {message_count} new messages")
                         
                         # Process messages (oldest first to maintain order)
                         for message in reversed(messages):
                             content = message.get('content', '').strip().lower()
-                            author = message.get('author', {}).get('username', 'Unknown')
                             
-                            log(f"Processing message: '{content}' from {author}")
-                            
-                            # Handle !start command
-                            if content == '!start':
-                                log(f"Received !start command from {author}")
+                            # Only process supported commands
+                            if content in supported_commands:
+                                author = message.get('author', {}).get('username', 'Unknown')
+                                log(f"Received {content} command from {author}")
                                 
-                                # Check if server is already running
-                                if self.server_manager.check_server():
-                                    log("Server is already running, sending response")
-                                    self.send_message(self.channel, "ℹ️ Server is already running!")
-                                else:
-                                    log("Starting server...")
-                                    success, response_msg = self.server_manager.start_server()
-                                    self.send_message(self.channel, response_msg)
+                                # Handle !start command
+                                if content == '!start':
+                                    # Check if server is already running
+                                    if self.server_manager.check_server():
+                                        self.send_message(self.channel, "ℹ️ Server is already running!")
+                                    else:
+                                        log("Starting server...")
+                                        success, response_msg = self.server_manager.start_server()
+                                        self.send_message(self.channel, response_msg)
                 
                 # Wait before checking again
                 time.sleep(2)  # Check every 2 seconds for new commands
