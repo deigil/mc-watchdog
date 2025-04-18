@@ -151,32 +151,33 @@ class ServerManager:
             self.is_starting = False
 
     def stop_server(self):
-        """Stop the Minecraft server"""
+        """Stops the Minecraft server Docker container."""
+        log("Attempting to stop server...")
+        if not self.check_server():
+            log("Server is already stopped.")
+            return False, "ℹ️ Server is already stopped."
+
         try:
-            if self.check_server():
-                subprocess.run(["docker", "stop", self.container], check=True)
-                log("Server container stop command sent")
-                
-                # First wait period (20 seconds)
-                for _ in range(20):
-                    if self.get_container_status() == "exited":
-                        self.manual_stop = False  # Reset manual stop to allow for new connections
-                        return True
-                    time.sleep(1)
-                
-                # If still running, wait another 20 seconds
-                log("Server taking longer to stop, waiting additional time...")
-                for _ in range(20):
-                    if self.get_container_status() == "exited":
-                        self.manual_stop = False  # Reset manual stop to allow for new connections
-                        return True
-                    time.sleep(1)
-                
-                raise Exception("Server did not stop after 40 seconds")
-            return False
+            # Execute docker stop command
+            command = f"docker stop {self.container}"
+            log(f"Executing command: {command}")
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, check=False)
+            log(f"Command exit code: {result.returncode}")
+            if result.stdout: log(f"Command stdout: {result.stdout.strip()}")
+            if result.stderr: log(f"Command stderr: {result.stderr.strip()}")
+
+            if result.returncode == 0:
+                log(f"Container '{self.container}' stopped successfully.")
+                # Update internal state if necessary
+                self.manual_stop = False 
+                return True, f"🛑 Server '{self.container}' stopped successfully."
+            else:
+                log(f"Failed to stop container '{self.container}'. Exit code: {result.returncode}")
+                return False, f"⚠️ Failed to stop server. Check logs for details. Error: {result.stderr.strip()[:100]}"
+
         except Exception as e:
-            log(f"Error stopping server: {e}")
-            return False
+            log(f"Exception while stopping server: {e}")
+            return False, f"❌ An error occurred while trying to stop the server: {e}"
 
     def get_container_status(self):
         """Get Docker container status"""

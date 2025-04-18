@@ -7,6 +7,7 @@ load_dotenv()
 # Discord configuration
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN', '')  # Get token from environment variable
 CHAT = os.getenv('DISCORD_CHANNEL', '')  # Channel for server control commands
+WATCHDOG = os.getenv('WATCHDOG_CHANNEL', '')  # Channel for watchdog
 
 # Server configuration
 DOCKER_CONTAINER = os.getenv('DOCKER_CONTAINER', 'wvh')
