@@ -12,6 +12,10 @@ from modules.logging import log
 from modules.discord import discord_bot, start_discord_bot, start_discord_monitor, broadcast_discord_message
 from modules.server import server_manager
 
+# Track startup time for 24-hour restart
+STARTUP_TIME = time.time()
+RESTART_INTERVAL = 24 * 60 * 60  # 24 hours in seconds
+
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     log(f"Received signal {signum}, shutting down gracefully...")
@@ -24,6 +28,21 @@ def signal_handler(signum, frame):
             log(f"Error sending shutdown message: {e}")
     
     sys.exit(0)
+
+def check_restart_needed():
+    """Check if 24 hours have passed and restart is needed"""
+    current_time = time.time()
+    uptime = current_time - STARTUP_TIME
+    
+    if uptime >= RESTART_INTERVAL:
+        hours_up = uptime / 3600
+        log(f"24-hour restart interval reached (uptime: {hours_up:.1f} hours)")
+        broadcast_discord_message("🔄 Watchdog is restarting (24h uptime reached)")
+        time.sleep(2)  # Give message time to send
+        log("Exiting for automatic restart...")
+        sys.exit(0)
+    
+    return False
 
 def monitor_minecraft_logs():
     """Start the Minecraft log monitoring thread"""
@@ -97,6 +116,7 @@ def main():
         signal.signal(signal.SIGINT, signal_handler)
         
         log("🤖 Watchdog Service Starting")
+        log(f"Automatic restart scheduled in 24 hours ({RESTART_INTERVAL} seconds)")
         
         # Start Discord bot and monitor first
         discord_started = start_discord()
@@ -111,7 +131,9 @@ def main():
         
         # Set up a periodic check for server status
         last_server_check = 0
+        last_restart_check = 0
         server_check_interval = 30  # Check server status every 30 seconds
+        restart_check_interval = 300  # Check restart needed every 5 minutes
         
         # Main monitoring loop
         while True:
@@ -125,6 +147,11 @@ def main():
                 if current_time - last_server_check >= server_check_interval:
                     server_manager.check_server()
                     last_server_check = current_time
+                
+                # Periodically check if restart is needed
+                if current_time - last_restart_check >= restart_check_interval:
+                    check_restart_needed()
+                    last_restart_check = current_time
                 
                 time.sleep(1)
                 

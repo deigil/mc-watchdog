@@ -38,17 +38,20 @@ class ServerManager:
                 log(f"Container {self.container} does not exist")
                 return False
                 
-            # Check if container is running and healthy
-            if "Up" in status and "healthy" in status:
+            # Check if container is running and strictly healthy
+            is_up = "Up" in status
+            is_strictly_healthy = "healthy" in status and "unhealthy" not in status
+
+            if is_up and is_strictly_healthy:
                 # Only log status changes
                 if not hasattr(self, '_last_health_status') or self._last_health_status != True:
-                    log(f"Container is healthy: {status}")
+                    log(f"Container is strictly healthy: {status}")
                     self._last_health_status = True
                 return True
             else:
                 # Only log status changes
                 if not hasattr(self, '_last_health_status') or self._last_health_status != False:
-                    log(f"Container is not healthy: {status}")
+                    log(f"Container is not strictly healthy: {status}")
                     self._last_health_status = False
                 return False
                 
@@ -114,9 +117,10 @@ class ServerManager:
                     self.is_starting = False
                     return False, "ℹ️ Server is already running!"
             
-            # Start the container
+            # Restart the container (this will stop it if running, then start it)
             try:
-                start_cmd = ["docker", "start", self.container]
+                # Using "restart" instead of "start"
+                start_cmd = ["docker", "restart", self.container]
                 log(f"Executing command: {' '.join(start_cmd)}")
                 
                 result = subprocess.run(
