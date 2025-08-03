@@ -146,6 +146,9 @@ def main():
                 # Periodically check server status (without logging)
                 if current_time - last_server_check >= server_check_interval:
                     server_manager.check_server()
+                    # Update Discord status based on server state
+                    if discord_started:
+                        discord_bot.update_status_sync()
                     last_server_check = current_time
                 
                 # Periodically check if restart is needed

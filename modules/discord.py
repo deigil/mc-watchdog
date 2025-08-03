@@ -55,11 +55,8 @@ class DiscordBot:
             log(f'Logged in as {self.client.user}')
             log(f'Bot is now visible as online in Discord')
             
-            await self.client.change_presence(
-                status=discord.Status.online, 
-                activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
-            )
-            log("Bot status set to online with 'Watching a POG Vault!' activity")
+            # Set initial status based on server state
+            await self.update_status()
             
             self._failed_channels = {}
             # Log both channels being used
@@ -367,6 +364,34 @@ class DiscordBot:
         except Exception as e:
             log(f"Discord API connection validation failed: {e}")
             return False
+
+    async def update_status(self):
+        """Update bot status based on server state"""
+        try:
+            if self.server_manager.check_server():
+                # Server is online - green status
+                await self.client.change_presence(
+                    status=discord.Status.online,
+                    activity=discord.Activity(type=discord.ActivityType.watching, name="a POG Vault 🎁")
+                )
+            else:
+                # Server is offline - red status
+                await self.client.change_presence(
+                    status=discord.Status.do_not_disturb,
+                    activity=discord.Activity(type=discord.ActivityType.watching, name="Server Offline")
+                )
+        except Exception as e:
+            log(f"Error updating bot status: {e}")
+
+    def update_status_sync(self):
+        """Sync wrapper for updating status"""
+        if self.is_ready():
+            try:
+                loop = self.client.loop
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.update_status(), loop)
+            except Exception as e:
+                log(f"Error scheduling status update: {e}")
 
 # --- Standalone functions (using the singleton instance) ---
 
