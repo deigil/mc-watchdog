@@ -168,7 +168,7 @@ class DiscordBot:
         # Define supported commands per channel
         supported_commands = {
             self.channels.get('chat'): ['!start'],
-            self.channels.get('watchdog'): ['!stop']
+            self.channels.get('watchdog'): ['!stop', '!update']
         }
         # Filter out None channels just in case env vars are missing
         valid_channel_ids = [ch_id for ch_id in self.channels.values() if ch_id]
@@ -265,6 +265,19 @@ class DiscordBot:
                                             self.send_message(channel_id, response_msg)
                                         else:
                                             self.send_message(channel_id, "ℹ️ Server is already stopped.")
+                                    
+                                    # --- !update command handling (WATCHDOG channel only) ---
+                                    elif channel_id == self.channels.get('watchdog') and content == '!update':
+                                        log(f"Received !update command from {author} in WATCHDOG channel ({channel_id})")
+                                        self.send_message(channel_id, "🔄 Starting server update process...")
+                                        # Run update in separate thread to avoid blocking Discord monitoring
+                                        import threading
+                                        update_thread = threading.Thread(
+                                            target=self._run_update, 
+                                            args=(channel_id,),
+                                            daemon=True
+                                        )
+                                        update_thread.start()
                                     
                                     # Ignore other messages or commands in wrong channels silently
                                     
@@ -392,6 +405,25 @@ class DiscordBot:
                     asyncio.run_coroutine_threadsafe(self.update_status(), loop)
             except Exception as e:
                 log(f"Error scheduling status update: {e}")
+
+    def _run_update(self, channel_id):
+        """Run server update process in separate thread"""
+        try:
+            success, messages = self.server_manager.update_server()
+            
+            # Send all progress messages
+            for message in messages:
+                self.send_message(channel_id, message)
+                time.sleep(0.5)  # Brief delay between messages
+                
+            if not success:
+                self.send_message(channel_id, "❌ Update process failed. Check logs for details.")
+            else:
+                self.send_message(channel_id, "✅ Server update completed successfully!")
+                
+        except Exception as e:
+            log(f"Error in update process: {e}")
+            self.send_message(channel_id, f"❌ Update failed with error: {str(e)[:100]}")
 
 # --- Standalone functions (using the singleton instance) ---
 

@@ -183,6 +183,203 @@ class ServerManager:
             log(f"Exception while stopping server: {e}")
             return False, f"❌ An error occurred while trying to stop the server: {e}"
 
+    def update_server(self):
+        """Complete server update process with progress messages"""
+        import requests
+        import zipfile
+        import shutil
+        import os
+        import subprocess
+        
+        # Configuration matching update.py
+        WOLDS_ROOT = "/workspace"  # Container path
+        UPDATE_DIR = os.path.join(WOLDS_ROOT, "update")
+        DATA_DIR = os.path.join(WOLDS_ROOT, "data")
+        ZIP_FILE_PATH = os.path.join(WOLDS_ROOT, "latest-wolds-server-pack.zip")
+        DOWNLOAD_URL = "https://cloud.iwolfking.xyz/s/eKAXACJgx7ELqwg/download/latest-wolds-server-pack.zip"
+        
+        # Config exclusions from update.py
+        CONFIG_EXCLUSIONS = [
+            "server-icon.png",
+            "config/luckperms/luckperms-h2.mv.db",
+            "config/minimotd/main.conf",
+        ]
+        
+        messages = []
+        
+        try:
+            # Step 1: Cleanup old files first (safe operation)
+            log("Starting update: Cleaning up old files...")
+            messages.append("🧹 Cleaning up old update files...")
+            
+            # Remove old zip file
+            if os.path.exists(ZIP_FILE_PATH):
+                os.remove(ZIP_FILE_PATH)
+                log(f"Removed old zip file: {ZIP_FILE_PATH}")
+                
+            # Remove old update directory
+            if os.path.exists(UPDATE_DIR):
+                shutil.rmtree(UPDATE_DIR)
+                log(f"Removed old update directory: {UPDATE_DIR}")
+                
+            # Create fresh update directory
+            os.makedirs(UPDATE_DIR, exist_ok=True)
+            log(f"Created fresh update directory: {UPDATE_DIR}")
+            
+            # Step 2: Download update (if this fails, data dir is untouched)
+            log("Downloading server update...")
+            messages.append("⬇️ Downloading server update...")
+            
+            response = requests.get(DOWNLOAD_URL, stream=True, timeout=120)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            bytes_downloaded = 0
+            
+            with open(ZIP_FILE_PATH, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    bytes_downloaded += len(chunk)
+            
+            log(f"Download completed: {bytes_downloaded / (1024*1024):.2f} MB")
+            messages.append("✅ Download completed successfully!")
+            
+            # Step 3: Extract the update
+            log("Extracting update files...")
+            messages.append("📦 Extracting update files...")
+            
+            with zipfile.ZipFile(ZIP_FILE_PATH, 'r') as zip_ref:
+                zip_ref.extractall(UPDATE_DIR)
+            
+            log("Extraction completed")
+            
+            # Step 4: Stop server (only after successful download/extract)
+            was_running = self.check_server()
+            if was_running:
+                log("Stopping server for update...")
+                messages.append("🛑 Stopping server for update...")
+                
+                success, stop_msg = self.stop_server()
+                if not success:
+                    raise Exception(f"Failed to stop server: {stop_msg}")
+                    
+                messages.append("✅ Server stopped successfully!")
+            else:
+                messages.append("ℹ️ Server was already stopped.")
+            
+            # Step 5: Delete mods folder for clean installation
+            mods_dir = os.path.join(DATA_DIR, "mods")
+            if os.path.exists(mods_dir):
+                log("Removing old mods folder...")
+                messages.append("🗑️ Removing old mods for clean installation...")
+                shutil.rmtree(mods_dir)
+                log("Old mods folder removed")
+            
+            # Step 6: Run rsync with same config as update.py
+            log("Synchronizing update files...")
+            messages.append("🔄 Synchronizing server files...")
+            
+            # Build exclusion arguments
+            exclusion_args = []
+            for config_file in CONFIG_EXCLUSIONS:
+                exclusion_args.extend(['--exclude', config_file])
+            
+            # Build rsync command
+            rsync_cmd = [
+                'rsync', '-avu'
+            ] + exclusion_args + [
+                f'{UPDATE_DIR}/',
+                f'{DATA_DIR}/'
+            ]
+            
+            result = subprocess.run(rsync_cmd, capture_output=True, text=True, check=True)
+            log("Rsync completed successfully")
+            if result.stdout:
+                log(f"Rsync output: {result.stdout[:200]}...")  # Log first 200 chars
+            
+            messages.append("✅ File synchronization completed!")
+            
+            # Step 7: Cleanup
+            log("Cleaning up temporary files...")
+            messages.append("🧹 Cleaning up temporary files...")
+            
+            # Remove zip file
+            if os.path.exists(ZIP_FILE_PATH):
+                os.remove(ZIP_FILE_PATH)
+                
+            # Remove update directory
+            if os.path.exists(UPDATE_DIR):
+                shutil.rmtree(UPDATE_DIR)
+                
+            log("Cleanup completed")
+            messages.append("✅ Cleanup completed!")
+            
+            # Step 8: Restart server if it was running
+            if was_running:
+                log("Restarting server...")
+                messages.append("🚀 Restarting server...")
+                
+                success, start_msg = self.start_server()
+                if success:
+                    messages.append("✅ Server restarted successfully!")
+                else:
+                    messages.append(f"⚠️ Server restart failed: {start_msg}")
+                    log(f"Server restart failed: {start_msg}")
+                    return False, messages
+            else:
+                messages.append("ℹ️ Server was not running before update, leaving stopped.")
+            
+            log("Server update completed successfully!")
+            return True, messages
+            
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Download failed: {str(e)[:100]}"
+            log(f"Update failed during download: {e}")
+            messages.append(f"❌ {error_msg}")
+            
+            # If server was running, try to restart it
+            if 'was_running' in locals() and was_running:
+                log("Attempting to restart server after download failure...")
+                success, start_msg = self.start_server()
+                if success:
+                    messages.append("🚀 Server restarted after failed update.")
+                else:
+                    messages.append(f"⚠️ Failed to restart server: {start_msg}")
+            
+            return False, messages
+            
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Rsync failed: {str(e)[:100]}"
+            log(f"Update failed during rsync: {e}")
+            messages.append(f"❌ {error_msg}")
+            
+            # Try to restart server even after rsync failure
+            if 'was_running' in locals() and was_running:
+                log("Attempting to restart server after rsync failure...")
+                success, start_msg = self.start_server()
+                if success:
+                    messages.append("🚀 Server restarted after failed update.")
+                else:
+                    messages.append(f"⚠️ Failed to restart server: {start_msg}")
+            
+            return False, messages
+            
+        except Exception as e:
+            error_msg = f"Update failed: {str(e)[:100]}"
+            log(f"Update failed with exception: {e}")
+            messages.append(f"❌ {error_msg}")
+            
+            # Try to restart server if it was stopped during update
+            if 'was_running' in locals() and was_running:
+                log("Attempting to restart server after update failure...")
+                success, start_msg = self.start_server()
+                if success:
+                    messages.append("🚀 Server restarted after failed update.")
+                else:
+                    messages.append(f"⚠️ Failed to restart server: {start_msg}")
+            
+            return False, messages
+
     def get_container_status(self):
         """Get Docker container status"""
         try:
@@ -224,3 +421,6 @@ def start_server():
 
 def stop_server():
     return server_manager.stop_server()
+
+def update_server():
+    return server_manager.update_server()
