@@ -15,6 +15,7 @@ class ServerManager:
         self.manual_stop = False  # Flag for manual stops
         self.last_server_state = True  # Last server state
         self.is_starting = False  # Flag to track server startup process
+        self.is_updating = False  # Flag to track server update process
 
     def check_container_health(self):
         """Check if the container exists and is healthy"""
@@ -183,6 +184,24 @@ class ServerManager:
             log(f"Exception while stopping server: {e}")
             return False, f"❌ An error occurred while trying to stop the server: {e}"
 
+    def get_modpack_version(self, data_dir):
+        """Read the modpack version from bcc-common.toml"""
+        import os
+        import re
+        try:
+            bcc_config_path = os.path.join(data_dir, "config", "bcc-common.toml")
+            if os.path.exists(bcc_config_path):
+                with open(bcc_config_path, 'r') as f:
+                    content = f.read()
+                    # Simple regex to find the version
+                    match = re.search(r'modpackVersion\s*=\s*"([^"]+)"', content)
+                    if match:
+                        return match.group(1)
+            return "Unknown"
+        except Exception as e:
+            log(f"Warning: Could not read modpack version: {e}")
+            return "Unknown"
+
     def update_server(self):
         """Complete server update process with progress messages"""
         import requests
@@ -191,42 +210,73 @@ class ServerManager:
         import os
         import subprocess
         
-        # Configuration matching update.py
-        WOLDS_ROOT = "/workspace"  # Container path
-        UPDATE_DIR = os.path.join(WOLDS_ROOT, "update")
-        DATA_DIR = os.path.join(WOLDS_ROOT, "data")
-        ZIP_FILE_PATH = os.path.join(WOLDS_ROOT, "latest-wolds-server-pack.zip")
-        DOWNLOAD_URL = "https://cloud.iwolfking.xyz/s/eKAXACJgx7ELqwg/download/latest-wolds-server-pack.zip"
+        # Prevent duplicate updates
+        if self.is_updating:
+            log("Update already in progress")
+            return False, ["⏳ Server update is already in progress..."]
         
-        # Config exclusions from update.py
-        CONFIG_EXCLUSIONS = [
-            "server-icon.png",
-            "config/luckperms/luckperms-h2.mv.db",
-            "config/minimotd/main.conf",
-        ]
-        
-        messages = []
+        self.is_updating = True
         
         try:
-            # Step 1: Cleanup old files first (safe operation)
+            # Configuration matching update.py
+            WOLDS_ROOT = "/workspace"  # Container path
+            UPDATE_DIR = os.path.join(WOLDS_ROOT, "update")
+            DATA_DIR = os.path.join(WOLDS_ROOT, "data")
+            ZIP_FILE_PATH = os.path.join(WOLDS_ROOT, "latest-wolds-server-pack.zip")
+            DOWNLOAD_URL = "https://cloud.iwolfking.xyz/s/eKAXACJgx7ELqwg/download/latest-wolds-server-pack.zip"
+            
+            # Config exclusions from update.py
+            CONFIG_EXCLUSIONS = [
+                "server-icon.png",
+                "config/luckperms/luckperms-h2.mv.db",
+                "config/minimotd/main.conf",
+                "config/the_vault/player_titles.json",
+                "config/lightmansdiscord_messages.txt",
+            ]
+            
+            messages = []
+            
+            # Step 1: Ensure data directory exists
+            if not os.path.exists(DATA_DIR):
+                error_msg = f"Data directory '{DATA_DIR}' does not exist. Cannot update."
+                log(f"ERROR: {error_msg}")
+                messages.append(f"❌ {error_msg}")
+                return False, messages
+            
+            # Log paths for debugging
+            log(f"Update paths - WOLDS_ROOT: {WOLDS_ROOT}, DATA_DIR: {DATA_DIR}, UPDATE_DIR: {UPDATE_DIR}")
+            
+            # Step 2: Cleanup old files first (safe operation)
             log("Starting update: Cleaning up old files...")
             messages.append("🧹 Cleaning up old update files...")
             
-            # Remove old zip file
-            if os.path.exists(ZIP_FILE_PATH):
-                os.remove(ZIP_FILE_PATH)
-                log(f"Removed old zip file: {ZIP_FILE_PATH}")
+            # Remove old zip file safely
+            try:
+                if os.path.exists(ZIP_FILE_PATH):
+                    os.remove(ZIP_FILE_PATH)
+                    log(f"Removed old zip file: {ZIP_FILE_PATH}")
+            except Exception as e:
+                log(f"Warning: Could not remove old zip file: {e}")
                 
-            # Remove old update directory
-            if os.path.exists(UPDATE_DIR):
-                shutil.rmtree(UPDATE_DIR)
-                log(f"Removed old update directory: {UPDATE_DIR}")
+            # Remove old update directory safely
+            try:
+                if os.path.exists(UPDATE_DIR):
+                    shutil.rmtree(UPDATE_DIR)
+                    log(f"Removed old update directory: {UPDATE_DIR}")
+            except Exception as e:
+                log(f"Warning: Could not remove old update directory: {e}")
                 
             # Create fresh update directory
-            os.makedirs(UPDATE_DIR, exist_ok=True)
-            log(f"Created fresh update directory: {UPDATE_DIR}")
+            try:
+                os.makedirs(UPDATE_DIR, exist_ok=True)
+                log(f"Created fresh update directory: {UPDATE_DIR}")
+            except Exception as e:
+                error_msg = f"Failed to create update directory: {e}"
+                log(f"ERROR: {error_msg}")
+                messages.append(f"❌ {error_msg}")
+                return False, messages
             
-            # Step 2: Download update (if this fails, data dir is untouched)
+            # Step 3: Download update (if this fails, data dir is untouched)
             log("Downloading server update...")
             messages.append("⬇️ Downloading server update...")
             
@@ -267,15 +317,21 @@ class ServerManager:
             else:
                 messages.append("ℹ️ Server was already stopped.")
             
-            # Step 5: Delete mods folder for clean installation
+            # Step 6: Delete mods folder for clean installation
             mods_dir = os.path.join(DATA_DIR, "mods")
-            if os.path.exists(mods_dir):
-                log("Removing old mods folder...")
-                messages.append("🗑️ Removing old mods for clean installation...")
-                shutil.rmtree(mods_dir)
-                log("Old mods folder removed")
+            try:
+                if os.path.exists(mods_dir):
+                    log("Removing old mods folder...")
+                    messages.append("🗑️ Removing old mods for clean installation...")
+                    shutil.rmtree(mods_dir)
+                    log("Old mods folder removed")
+                else:
+                    log("No existing mods folder found, proceeding...")
+            except Exception as e:
+                log(f"Warning: Could not remove mods folder: {e}")
+                messages.append("⚠️ Could not remove old mods folder, but continuing...")
             
-            # Step 6: Run rsync with same config as update.py
+            # Step 7: Run rsync with same config as update.py
             log("Synchronizing update files...")
             messages.append("🔄 Synchronizing server files...")
             
@@ -299,22 +355,30 @@ class ServerManager:
             
             messages.append("✅ File synchronization completed!")
             
-            # Step 7: Cleanup
+            # Step 8: Cleanup
             log("Cleaning up temporary files...")
             messages.append("🧹 Cleaning up temporary files...")
             
-            # Remove zip file
-            if os.path.exists(ZIP_FILE_PATH):
-                os.remove(ZIP_FILE_PATH)
+            # Remove zip file safely
+            try:
+                if os.path.exists(ZIP_FILE_PATH):
+                    os.remove(ZIP_FILE_PATH)
+                    log(f"Removed zip file: {ZIP_FILE_PATH}")
+            except Exception as e:
+                log(f"Warning: Could not remove zip file: {e}")
                 
-            # Remove update directory
-            if os.path.exists(UPDATE_DIR):
-                shutil.rmtree(UPDATE_DIR)
+            # Remove update directory safely
+            try:
+                if os.path.exists(UPDATE_DIR):
+                    shutil.rmtree(UPDATE_DIR)
+                    log(f"Removed update directory: {UPDATE_DIR}")
+            except Exception as e:
+                log(f"Warning: Could not remove update directory: {e}")
                 
             log("Cleanup completed")
             messages.append("✅ Cleanup completed!")
             
-            # Step 8: Restart server if it was running
+            # Step 9: Restart server if it was running
             if was_running:
                 log("Restarting server...")
                 messages.append("🚀 Restarting server...")
@@ -329,7 +393,16 @@ class ServerManager:
             else:
                 messages.append("ℹ️ Server was not running before update, leaving stopped.")
             
-            log("Server update completed successfully!")
+            # Get the updated version
+            updated_version = self.get_modpack_version(DATA_DIR)
+            log(f"Server update completed successfully! Updated to version: {updated_version}")
+            
+            # Add version info to final success message
+            if updated_version != "Unknown":
+                messages.append(f"🎉 Server updated to version {updated_version} successfully!")
+            else:
+                messages.append("🎉 Server update completed successfully!")
+            
             return True, messages
             
         except requests.exceptions.RequestException as e:
@@ -379,6 +452,9 @@ class ServerManager:
                     messages.append(f"⚠️ Failed to restart server: {start_msg}")
             
             return False, messages
+        
+        finally:
+            self.is_updating = False
 
     def get_container_status(self):
         """Get Docker container status"""

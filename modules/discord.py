@@ -418,8 +418,6 @@ class DiscordBot:
                 
             if not success:
                 self.send_message(channel_id, "❌ Update process failed. Check logs for details.")
-            else:
-                self.send_message(channel_id, "✅ Server update completed successfully!")
                 
         except Exception as e:
             log(f"Error in update process: {e}")
