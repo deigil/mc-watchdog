@@ -7,6 +7,8 @@ from modules import message_tracker  # Import from modules package
 from datetime import datetime  # This is for datetime objects
 import json
 import re
+import os
+import requests
 
 class ServerManager:
     def __init__(self):
@@ -185,18 +187,35 @@ class ServerManager:
             return False, f"❌ An error occurred while trying to stop the server: {e}"
 
     def get_modpack_version(self, data_dir):
-        """Read the modpack version from bcc-common.toml"""
-        import os
+        """Read the modpack version from GitHub raw pack.toml"""
         import re
+        import requests
+        
         try:
-            bcc_config_path = os.path.join(data_dir, "config", "bcc-common.toml")
-            if os.path.exists(bcc_config_path):
-                with open(bcc_config_path, 'r') as f:
+            # Use GitHub raw URL to get the latest pack.toml
+            github_raw_url = "https://raw.githubusercontent.com/iwolfking/Wolds-Vaults/master/pack.toml"
+            
+            response = requests.get(github_raw_url, timeout=10)
+            if response.status_code == 200:
+                content = response.text
+                match = re.search(r'version\s*=\s*"([^"]+)"', content)
+                if match:
+                    version = match.group(1)
+                    log(f"Read modpack version from GitHub: {version}")
+                    return version
+            
+            # Fallback to local pack.toml if GitHub fails
+            wolds_repo_path = os.path.join(os.path.dirname(data_dir), "Wolds-Vaults")
+            pack_toml_path = os.path.join(wolds_repo_path, "pack.toml")
+            if os.path.exists(pack_toml_path):
+                with open(pack_toml_path, 'r') as f:
                     content = f.read()
-                    # Simple regex to find the version
-                    match = re.search(r'modpackVersion\s*=\s*"([^"]+)"', content)
+                    match = re.search(r'version\s*=\s*"([^"]+)"', content)
                     if match:
-                        return match.group(1)
+                        version = match.group(1)
+                        log(f"Fallback: Read modpack version from local pack.toml: {version}")
+                        return version
+            
             return "Unknown"
         except Exception as e:
             log(f"Warning: Could not read modpack version: {e}")
